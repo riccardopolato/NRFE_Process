@@ -1,17 +1,14 @@
 # Progetto PROCESS — Nuclear Fusion Reactor Engineering
 
-Repository per il progetto del corso di **Nuclear Fusion Reactor Engineering** (A.A. 2025–2026, Politecnico di Torino), basato sul codice [PROCESS](https://github.com/ukaea/PROCESS) sviluppato da UKAEA.
+Repository **pubblica e "pulita"** che mette a disposizione un codice e una struttura di cartelle per lavorare con [PROCESS](https://github.com/ukaea/PROCESS) (UKAEA) in modo più rapido e intuitivo, rispetto all'uso diretto degli script ufficiali.
 
-## Obiettivo
+Il cuore della repo è [`scripts/process_cli.py`](scripts/process_cli.py): una **CLI unificata** che wrappa tutti i comandi ufficiali di PROCESS, ne aggiunge di custom (per i bug noti di `plot_scans.py` e per gli scan manuali su variabili senza `nsweep`), e propone un menu interattivo per chi non vuole ricordare la sintassi dei singoli comandi.
 
-PROCESS è un *reactor systems code* che permette di valutare la fattibilità ingegneristica ed economica di una centrale a fusione, calcolando in modo self-consistent i parametri di impianto a partire da un set di vincoli (consistency + limit equations) e variabili di iterazione.
+## Come usarla
 
-L'obiettivo del progetto è partire da un input file funzionante (`large_tokamak_IN.DAT`) e:
-- modificare alcuni modelli e/o parametri di input;
-- analizzare l'effetto delle modifiche sui parametri della macchina e sulle figures of merit;
-- documentare i risultati in un report finale.
+Chiunque può **copiare liberamente** questa repo sul proprio computer e usarla in locale: basta avere [PROCESS installato](https://ukaea.github.io/PROCESS/installation/installation/) (tipicamente in `~/PROCESS` con il proprio virtual environment) e clonare/scaricare questa cartella in una posizione qualsiasi.
 
-> *Nota: aggiornare questa sezione con il caso studio specifico assegnato (es. cambio del modello di heat flux al divertore al modello di Wade, parametric sweep su `f_div_flux_expansion`, ecc.).*
+> ℹ️ La repo verrà **aggiornata periodicamente** per aggiungere nuove funzioni alla CLI o correggere bug. Conviene quindi tenere d'occhio il remoto e aggiornare la copia locale ogni tanto.
 
 ## Struttura della repository
 
@@ -19,7 +16,6 @@ L'obiettivo del progetto è partire da un input file funzionante (`large_tokamak
 .
 ├── README.md                         # questo file
 ├── .gitignore
-├── .vscode/                          # impostazioni editor (locali)
 ├── requirements.txt                  # dipendenze Python aggiuntive (numpy, matplotlib, pandas)
 │
 ├── inputs-output/                    # IN.DAT template + MFILE/OUT/SIG_TF di esempio
@@ -28,55 +24,26 @@ L'obiettivo del progetto è partire da un input file funzionante (`large_tokamak
 │   └── scan2D_example_*.DAT                # esempio di scan 2D
 │
 ├── scripts/
-│   ├── process_cli.py                # CLI unificata per tutti i comandi PROCESS (vedi sezione sotto)
+│   ├── process_cli.py                # CLI unificata per tutti i comandi PROCESS
 │   └── old_scripts/                  # vecchi script (Plotter.py, run_scan.py)
 │
-├── manual_scans/                     # output dei comandi manual-scan / manual-scan-2d
-│                                     # ⚠️ contenuti pesanti, vedi nota di pulizia in fondo alla sezione process_cli
-│
-├── Figure_BoB/                       # figure per la sezione "Balance of Plant" del report
-├── Figure_DIV/                       # figure per la sezione divertore
-├── Figures_BB/                       # figure per la sezione "Breeding Blanket"
-└── Figures_HCD/                      # figure per la sezione "Heating & Current Drive"
+└── manual_scans/                     # output dei comandi manual-scan / manual-scan-2d
+                                      # ⚠️ contenuti pesanti, vedi nota di pulizia in fondo
 ```
 
-PROCESS **non** è incluso in questa repository: va installato a parte seguendo la [guida ufficiale](https://ukaea.github.io/PROCESS/installation/installation/). Tipicamente si trova in `~/PROCESS` con il proprio virtual environment.
+PROCESS **non** è incluso in questa repository: va installato a parte seguendo la [guida ufficiale](https://ukaea.github.io/PROCESS/installation/installation/).
 
-## Setup iniziale (una volta sola, per ciascun membro del gruppo)
-
-### 1. Configurare Git
-
-Su Ubuntu, da terminale:
-```bash
-git config --global user.name "Nome Cognome"
-git config --global user.email "tua-email@example.com"
-```
-L'email dovrebbe coincidere con quella usata su GitHub.
-
-### 2. Clonare la repository
-
-In una cartella **diversa** da quella di PROCESS (es. la home):
-```bash
-cd ~
-git clone https://github.com/<utente>/<nome-repo>.git
-cd <nome-repo>
-```
-
-### 3. Attivare il virtual environment di PROCESS
-
-Prima di lanciare il codice, indipendentemente dalla cartella in cui ci si trova:
+Prima di lanciare i comandi è sufficiente attivare il virtual environment di PROCESS:
 ```bash
 source ~/PROCESS/process/bin/activate
 ```
-Si vedrà comparire `(process)` davanti al prompt.
-
 > Nota: `scripts/process_cli.py` funziona **anche senza attivare il venv** — si auto-rilancia con il python del venv quando serve. L'attivazione resta utile per usare i comandi diretti di PROCESS (vedi sezione finale).
 
 ---
 
 ## Usare PROCESS via `scripts/process_cli.py`
 
-Il file [`scripts/process_cli.py`](scripts/process_cli.py) è il **punto di ingresso unico** per lavorare con PROCESS in questa repository. Wrappa tutti i comandi ufficiali, ne aggiunge di custom (per i bug noti di `plot_scans.py` e per gli scan manuali su variabili senza `nsweep`), e propone automaticamente le 4 cartelle `Figure*/` come destinazione dei plot.
+Il file [`scripts/process_cli.py`](scripts/process_cli.py) è il **punto di ingresso unico** per lavorare con PROCESS in questa repository.
 
 ### Due modalità d'uso
 
@@ -84,7 +51,7 @@ Il file [`scripts/process_cli.py`](scripts/process_cli.py) è il **punto di ingr
 ```bash
 python3 scripts/process_cli.py
 ```
-Apre un menu numerato, fa scegliere i file da una lista auto-rilevata e propone le 4 cartelle Figures per gli output.
+Apre un menu numerato, fa scegliere i file da una lista auto-rilevata e propone le cartelle di output per i plot.
 
 **A sottocomandi** (per chi va veloce):
 ```bash
@@ -128,7 +95,7 @@ Stampa al volo il valore di una o più variabili (ultimo punto di scan o unico p
 > Esempio: `read inputs-output/scan_example_MFILE.DAT rmajor p_fusion_total_mw` → stampa `rmajor = 8.5` e `p_fusion_total_mw = 1616.7`.
 
 #### [11] `plot-1d` — plot Y(s) vs scan var, **bypassa** `plot_scans.py`
-Versione "in casa" di `[3] scan` che legge direttamente l'MFILE (via `process.io.mfile.MFile`) senza usare lo script ufficiale. Risolve il bug di `rad_fraction_sol` e simili scan variables "constrained". Supporta una o più Y nello stesso plot. Fallback `--xvalues` (CSV) per quando PROCESS non scrive la scan variable nell'MFILE. Output PNG in una delle 4 cartelle `Figure*/`.
+Versione "in casa" di `[3] scan` che legge direttamente l'MFILE (via `process.io.mfile.MFile`) senza usare lo script ufficiale. Risolve il bug di `rad_fraction_sol` e simili scan variables "constrained". Supporta una o più Y nello stesso plot. Fallback `--xvalues` (CSV) per quando PROCESS non scrive la scan variable nell'MFILE. Output PNG.
 
 #### [12] `plot-2d` — contour 2D + curve parametriche da scan 2D
 Per MFILE che contengono uno scan 2D (`isweep`, `isweep_2`). Genera due PNG:
@@ -197,7 +164,7 @@ python3 scripts/process_cli.py compare-runs \
 
 ### ⚠️ Pulizia degli output di `manual-scan` / `manual-scan-2d`
 
-Per **non appesantire la repository**, dopo aver verificato i risultati di uno sweep bisogna **cancellare manualmente** le sottocartelle pesanti, lasciando solo i `.csv` (e opzionalmente i `.png` e `log.txt`).
+Per **non appesantire la cartella locale**, dopo aver verificato i risultati di uno sweep conviene **cancellare manualmente** le sottocartelle pesanti, lasciando solo i `.csv` (e opzionalmente i `.png` e `log.txt`).
 
 Ogni sweep produce in `manual_scans/<scan_name>/`:
 
@@ -284,51 +251,6 @@ python ~/PROCESS/process/io/write_new_in_dat.py \
 
 ---
 
-## Flusso di lavoro Git (uso quotidiano)
-
-Dato che siamo in due, prima di iniziare a lavorare bisogna sempre allinearsi al remoto.
-
-### All'inizio della sessione di lavoro
-```bash
-git pull
-```
-Scarica le modifiche fatte dall'altro membro del gruppo.
-
-### Durante / a fine lavoro
-```bash
-git status                       # mostra cosa è cambiato
-git add .                        # mette in stage tutte le modifiche
-git commit -m "messaggio chiaro" # crea il commit locale
-git push                         # carica sul remoto
-```
-
-### Suggerimenti per i messaggi di commit
-- Scrivere brevemente *cosa* è stato fatto, non *come*.
-- Esempi buoni: `"Aggiunto IN.DAT con modello Wade"`, `"Sweep su f_div_flux_expansion: 5 punti"`, `"Bozza sezione divertore del report"`.
-- Esempi da evitare: `"update"`, `"modifiche"`, `"asdf"`.
-
-### Se due persone modificano lo stesso file
-Git proverà a fare il merge automatico. Se non riesce, segnalerà un *conflict*: si apre il file, si vedono i blocchi marcati con `<<<<<<<`, `=======`, `>>>>>>>`, si decide manualmente quale versione tenere (o si fondono), si salva, poi:
-```bash
-git add <file-risolto>
-git commit
-git push
-```
-
-**Per evitare conflitti**: se possibile, dividersi i file (es. uno lavora sugli input, l'altro sugli script di post-process) o concordarsi a voce prima di toccare lo stesso file.
-
-## Cosa NON committare
-
-Nel `.gitignore` sono già esclusi:
-- il virtual environment di PROCESS (non va mai versionato);
-- file temporanei e cache di Python (`__pycache__/`, `*.pyc`);
-- file di sistema (`.DS_Store`, `Thumbs.db`);
-- file pesanti generati a runtime che si possono ricreare lanciando di nuovo il codice (es. `*.log` molto grossi).
-
-Inoltre, **prima di committare** controllare di aver pulito gli output pesanti dei `manual-scan` (vedi tabella nella sezione `process_cli.py`).
-
-In caso di dubbio: **non committare credenziali, password, dati personali**.
-
 ## Riferimenti
 
 - [PROCESS — repository ufficiale](https://github.com/ukaea/PROCESS)
@@ -336,11 +258,3 @@ In caso di dubbio: **non committare credenziali, password, dati personali**.
 - [PROCESS — istruzioni di installazione](https://ukaea.github.io/PROCESS/installation/installation/)
 - [PROCESS — utilities di I/O](https://ukaea.github.io/PROCESS/io/utilities/)
 - [Modello del divertore](https://ukaea.github.io/PROCESS/eng-models/divertor/)
-
-## Autori
-
-- Riccardo Polato
-- Gabriele Stellini
-
-Corso di Nuclear Fusion Reactor Engineering, A.A. 2025–2026
-Docenti: A. Froio, A. Zappatore — Politecnico di Torino, Dipartimento Energia "G. Ferraris"
