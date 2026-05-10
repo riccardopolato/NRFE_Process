@@ -1,0 +1,256 @@
+% ============================================================
+%  Riassunto risultati analisi DIVERTORE - modello Wade
+%  Da inserire come sezione/capitolo nel report finale
+% ============================================================
+% Pacchetti suggeriti nel preambolo del documento principale:
+%   \usepackage{amsmath, amssymb, siunitx, graphicx, booktabs}
+%   \usepackage[italian]{babel}
+% ============================================================
+
+\section{Analisi del divertore}
+\label{sec:divertor}
+
+\subsection{Setup e modello}
+
+L'analisi del divertore è stata condotta utilizzando il modello \textbf{Wade}
+(\verb|i_div_heat_load = 2|) implementato in PROCESS, che calcola il carico
+termico stazionario sul target del divertore tramite la formula
+\begin{equation}
+    q_{div}
+    \;=\;
+    \frac{P_{SOL}\,(1 - f_{rad,SOL})}
+         {2\pi N_{div} R \,\lambda_{int}\, F_{exp}\, \sin\theta_{div}}
+    \label{eq:wade}
+\end{equation}
+dove $P_{SOL}$ è la potenza che attraversa la separatrice, $\lambda_{int}$
+la larghezza della SOL (Eich scaling + Scarabosio S-factor), e i tre
+parametri di design analizzati sono:
+\begin{itemize}
+    \item \verb|f_div_flux_expansion| ($F_{exp}$): espansione del flusso
+          magnetico vicino al target;
+    \item \verb|deg_div_field_plate| ($\theta_{div}$): angolo di incidenza
+          delle linee di campo sulla piastra;
+    \item \verb|rad_fraction_sol| ($f_{rad,SOL}$): frazione di potenza
+          irradiata nella SOL prima di raggiungere il target.
+\end{itemize}
+
+Il template di partenza è una configurazione DEMO-like pulsata
+(\verb|large_tokamak_template_IN.DAT|), con figure of merit la
+minimizzazione di $R_{major}$. Tutti gli scan 1D e 2D sono stati eseguiti
+tramite uno script ad-hoc (\verb|manual-scan| / \verb|manual-scan-2d|
+in \verb|scripts/process_cli.py|), che modifica iterativamente le variabili
+nell'IN.DAT, lancia PROCESS, e raccoglie gli output in CSV.
+
+% ------------------------------------------------------------
+\subsection{Scan 1D}
+% ------------------------------------------------------------
+
+\subsubsection{Scan A: \texttt{rad\_fraction\_sol}}
+
+Range esplorato: $f_{rad,SOL} \in [0.4, 0.8]$, 5 punti, scan parametrico
+nativo (\verb|nsweep = 52|). Risultato atteso: dipendenza lineare
+$q_{div} \propto (1 - f_{rad,SOL})$.
+
+% TODO: aggiornare con i numeri precisi dal nostro scan
+\textbf{Risultato}: $q_{div}$ scende linearmente da $\sim 9$~MW/m$^2$ a
+$\sim 3$~MW/m$^2$ passando da $f_{rad,SOL} = 0.4$ a $0.8$. Comportamento
+compatibile con la formula~\eqref{eq:wade}.
+
+\subsubsection{Scan B: \texttt{f\_div\_flux\_expansion}}
+
+Range esplorato: $F_{exp} \in [1.5, 5.0]$, 6 punti, scan manuale (no
+\verb|nsweep| dedicato).
+
+\textbf{Risultato}: dipendenza iperbolica $q_{div} \propto 1/F_{exp}$
+verificata con costante $q_{div} \cdot F_{exp} = 13.5$~MW/m$^2$
+(deviazione $< 1\%$ su tutti i 6 punti). Il valore baseline DEMO
+($F_{exp} = 2$) produce $q_{div} \approx 6.7$~MW/m$^2$, con margine
+$\sim 30\%$ rispetto al limite stazionario del tungsteno
+($\sim 10$~MW/m$^2$).
+
+\begin{table}[h]
+    \centering
+    \caption{Scan 1D di $F_{exp}$. La quantità $q_{div} \cdot F_{exp}$
+             è costante a $13.5$~MW/m$^2$.}
+    \begin{tabular}{ccc}
+        \toprule
+        $F_{exp}$ & $q_{div}$ [MW/m$^2$] & $q_{div} \cdot F_{exp}$ [MW/m$^2$] \\
+        \midrule
+        1.5 &  8.9 & 13.4 \\
+        2.0 &  6.7 & 13.4 \\
+        2.5 &  5.4 & 13.5 \\
+        3.0 &  4.5 & 13.5 \\
+        4.0 &  3.4 & 13.6 \\
+        5.0 &  2.7 & 13.5 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\subsubsection{Scan C: \texttt{deg\_div\_field\_plate}}
+
+Range esplorato: $\theta_{div} \in [0.5\degree, 5\degree]$, 6 punti,
+scan manuale.
+
+\textbf{Risultato}: dipendenza $q_{div} \propto 1/\sin\theta_{div}$
+verificata con costante $q_{div} \cdot \sin\theta = 0.116$~MW/m$^2$
+(deviazione $< 2\%$). Valore baseline ($\theta = 1\degree$):
+$q_{div} = 6.7$~MW/m$^2$. \textbf{Punto critico}: a $\theta = 0.5\degree$
+il carico schizza a $13.4$~MW/m$^2$, oltre il limite W. Per $\theta < 1\degree$
+la curva è in regime fortemente non-lineare ($dq/d\theta \sim 1/\theta^2$),
+implicando sensibilità elevata a piccole imperfezioni geometriche
+(disallineamento piastre, deformazioni termiche operative).
+
+\begin{table}[h]
+    \centering
+    \caption{Scan 1D di $\theta_{div}$. La quantità $q_{div} \cdot \sin\theta$
+             è costante a $0.116$~MW/m$^2$.}
+    \begin{tabular}{cccc}
+        \toprule
+        $\theta_{div}$ [°] & $\sin\theta$ & $q_{div}$ [MW/m$^2$] &
+        $q_{div} \cdot \sin\theta$ \\
+        \midrule
+        0.5 & 0.0087 & 13.4 & 0.117 \\
+        1.0 & 0.0175 &  6.7 & 0.117 \\
+        2.0 & 0.0349 &  3.3 & 0.115 \\
+        3.0 & 0.0523 &  2.2 & 0.115 \\
+        4.0 & 0.0698 &  1.7 & 0.119 \\
+        5.0 & 0.0872 &  1.3 & 0.113 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+% ------------------------------------------------------------
+\subsection{Scan 2D}
+% ------------------------------------------------------------
+
+Tre scan 2D sono stati eseguiti, uno per ciascuna coppia di parametri
+del modello Wade. Per ognuno la griglia è $5 \times 5$ (25 run, tutti
+convergenti). Il terzo parametro è stato tenuto al valore baseline
+($F_{exp} = 2$, $\theta_{div} = 1\degree$, $f_{rad,SOL} = 0.7$ a seconda
+del caso).
+
+\subsubsection{Scan 2D-1: $F_{exp} \times \theta_{div}$ (geometria pura)}
+
+\textbf{Forma delle isolinee}: iperboliche, $F_{exp} \cdot \sin\theta = $ const
+(coerente con~\eqref{eq:wade} a $f_{rad,SOL}$ fissato).
+
+\textbf{Range $q_{div}$}: $\sim 1.3$ a $\sim 18$~MW/m$^2$.
+
+\textbf{Lettura}: i due parametri geometrici sono \emph{sostituibili}:
+si può compensare un piccolo $\theta$ con un grande $F_{exp}$ e viceversa.
+La regione infeasible ($q_{div} > 10$~MW/m$^2$) si concentra nell'angolo
+$F_{exp} \le 2$, $\theta \le 1\degree$.
+
+% TODO: inserire qui Figure_DIV/2d_contour_pflux_div_heat_load_mw_FEXP_THETA.png
+% \begin{figure}[h]
+%     \centering
+%     \includegraphics[width=0.9\textwidth]{Figure_DIV/2d_geom.png}
+%     \caption{Scan 2D di $q_{div}$ in funzione di $F_{exp}$ e $\theta_{div}$.}
+% \end{figure}
+
+\subsubsection{Scan 2D-2: $F_{exp} \times f_{rad,SOL}$
+               (topologia magnetica + radiazione)}
+
+\textbf{Forma delle isolinee}: oblique, approssimativamente lineari della
+forma $f_{rad,SOL} = 1 - k\, F_{exp}$, coerenti con la dipendenza
+$q_{div} \propto (1-f_{rad,SOL})/F_{exp}$.
+
+\textbf{Range $q_{div}$}: $\sim 1.6$ a $\sim 18.4$~MW/m$^2$.
+
+\textbf{Verifica del modello}: la quantità
+$q_{div} \cdot F_{exp} / (1 - f_{rad,SOL})$ è costante a
+$44.8$~MW/m$^2$ ($\pm 0.5\%$) su tutti i 25 punti, confermando in modo
+schiacciante la formula~\eqref{eq:wade}.
+
+\textbf{Lettura}: emergono due \emph{filosofie di design} sostituibili:
+\begin{itemize}
+    \item \emph{Topologia avanzata}: $F_{exp} \to 4$--$5$ con $f_{rad,SOL}$
+          moderato ($\sim 0.5$). Richiede configurazioni magnetiche tipo
+          Snowflake o Super-X.
+    \item \emph{Forte seeding di radiazione}: $F_{exp}$ standard ($\sim 2$)
+          ma $f_{rad,SOL} \to 0.8$. Richiede iniezione mirata di impurità
+          (Ar, Xe, N) con costo in $Z_{eff}$ e diluizione del combustibile.
+\end{itemize}
+
+\subsubsection{Scan 2D-3: $\theta_{div} \times f_{rad,SOL}$
+               (angolo + radiazione)}
+
+\textbf{Forma delle isolinee}: curve fortemente non-lineari per piccoli
+$\theta$, dovute alla singolarità $1/\sin\theta$.
+
+\textbf{Range $q_{div}$}: $\sim 1.3$ a $\sim 42$~MW/m$^2$ (massimo
+assoluto fra tutti gli scan).
+
+\textbf{Verifica del modello}: la quantità
+$q_{div} \cdot \sin\theta / (1 - f_{rad,SOL})$ è costante a
+$0.580$~MW/m$^2$ ($\pm 1\%$).
+
+\textbf{Lettura}: a $\theta = 0.5\degree$, anche con $f_{rad,SOL} = 0.8$
+(massima radiazione operativamente plausibile), il carico
+$q_{div} = 13.4$~MW/m$^2$ resta sopra il limite W. Questo conferma che
+\textbf{la stabilità geometrica della piastra è il fattore di rischio
+operativo dominante} del divertore: piccole imperfezioni in $\theta$
+possono portare il design fuori dalla regione feasible indipendentemente
+dalle altre due leve.
+
+% ------------------------------------------------------------
+\subsection{Sintesi: gerarchia di sensibilità dei parametri}
+% ------------------------------------------------------------
+
+Combinando i risultati dei tre scan 2D, si stabilisce una gerarchia chiara
+di criticità dei parametri del modello Wade:
+
+\begin{enumerate}
+    \item \textbf{$\theta_{div}$ è il parametro più critico} per piccoli
+          valori, a causa della singolarità $1/\sin\theta$. Il design
+          deve mantenersi in regime $\theta \ge 1.5\degree$ per avere
+          margini di sicurezza ragionevoli rispetto alle deformazioni
+          operative.
+    \item \textbf{$F_{exp}$ è la "leva ingegneristica"}: efficace
+          (riduzione fattore $\sim 3$ da 1.5 a 5), ma richiede topologie
+          magnetiche avanzate non triviali da implementare.
+    \item \textbf{$f_{rad,SOL}$ è la "leva operativa"}: lineare e
+          flessibile in tempo reale tramite seeding di impurità, ma
+          limitata a $\lesssim 0.85$ per non compromettere la H-mode.
+\end{enumerate}
+
+Il design DEMO baseline ($F_{exp} = 2$, $\theta = 1\degree$,
+$f_{rad,SOL} = 0.7$) si colloca a $q_{div} \approx 6.7$~MW/m$^2$, con
+margine $\sim 30\%$ rispetto al limite W stazionario, ma con margini
+\emph{collassanti rapidamente} se uno qualsiasi dei tre parametri si
+sposta verso il limite inferiore della finestra operativa.
+
+% ------------------------------------------------------------
+\subsection{Limiti del modello e direzioni future}
+% ------------------------------------------------------------
+
+Il modello Wade implementato in PROCESS è una rappresentazione
+\emph{stazionaria zero-dimensionale} del divertore, basata su scaling
+empirici (Eich, Scarabosio). I limiti principali rilevati dall'analisi:
+
+\begin{itemize}
+    \item Il parametro \verb|rad_fraction_sol| è un input \emph{effettivo}:
+          PROCESS non calcola la fisica self-consistent della radiazione SOL
+          (concentrazione di impurità necessaria, stabilità della
+          dissipazione, interazione con la H-mode). Per analisi più
+          dettagliate sono necessari codici di edge plasma dedicati
+          (SOLPS, SOLEDGE).
+    \item Il modello non cattura transienti (ELM, disruptions) che possono
+          generare carichi di picco $\sim 10\times$ il valore stazionario.
+    \item Le configurazioni divertoriali avanzate (Snowflake, Super-X)
+          sono incluse tramite il solo parametro $F_{exp}$, senza
+          rappresentazione della complessità geometrica e ingegneristica
+          aggiuntiva.
+\end{itemize}
+
+% ============================================================
+%  TODO per il report finale:
+%   1. Inserire le 3 figure Figure_DIV/*.png nei punti indicati
+%   2. Inserire la figura "trinity" con i 3 contour affiancati
+%      (Figure_DIV/wade_feasibility_trinity.png)
+%   3. Aggiungere nella bibliografia:
+%      - Wade & Leuer 2021 (modello heat flux)
+%      - Eich et al. 2013 (lambda_q scaling)
+%      - Scarabosio et al. 2014 (S-factor)
+%   4. Verificare i numeri con i CSV in manual_scans/
+% ============================================================

@@ -1,0 +1,34 @@
+Manual scan 2D: f_div_flux_expansion (5) × deg_div_field_plate (5) = 25 run
+Template:    inputs-output/scan_example_IN.DAT
+Output dir:  manual_scans/f_div_flux_expansion_deg_div_field_plate_20260510_170747
+Outputs:     ['pflux_div_heat_load_mw']
+
+[1/25] f_div_flux_expansion=1.5, deg_div_field_plate=0.5 → CONVERGED  (pflux_div_heat_load_mw = 17.84)
+[2/25] f_div_flux_expansion=1.5, deg_div_field_plate=1.0 → CONVERGED  (pflux_div_heat_load_mw = 8.923)
+[3/25] f_div_flux_expansion=1.5, deg_div_field_plate=2.0 → CONVERGED  (pflux_div_heat_load_mw = 4.462)
+[4/25] f_div_flux_expansion=1.5, deg_div_field_plate=3.0 → CONVERGED  (pflux_div_heat_load_mw = 2.975)
+[5/25] f_div_flux_expansion=1.5, deg_div_field_plate=5.0 → CONVERGED  (pflux_div_heat_load_mw = 1.787)
+[6/25] f_div_flux_expansion=2.0, deg_div_field_plate=0.5 → CONVERGED  (pflux_div_heat_load_mw = 13.41)
+[7/25] f_div_flux_expansion=2.0, deg_div_field_plate=1.0 → CONVERGED  (pflux_div_heat_load_mw = 6.705)
+[8/25] f_div_flux_expansion=2.0, deg_div_field_plate=2.0 → CONVERGED  (pflux_div_heat_load_mw = 3.353)
+[9/25] f_div_flux_expansion=2.0, deg_div_field_plate=3.0 → CONVERGED  (pflux_div_heat_load_mw = 2.236)
+[10/25] f_div_flux_expansion=2.0, deg_div_field_plate=5.0 → CONVERGED  (pflux_div_heat_load_mw = 1.343)
+[11/25] f_div_flux_expansion=3.0, deg_div_field_plate=0.5 → CONVERGED  (pflux_div_heat_load_mw = 8.952)
+[12/25] f_div_flux_expansion=3.0, deg_div_field_plate=1.0 → CONVERGED  (pflux_div_heat_load_mw = 4.476)
+[13/25] f_div_flux_expansion=3.0, deg_div_field_plate=2.0 → CONVERGED  (pflux_div_heat_load_mw = 2.238)
+[14/25] f_div_flux_expansion=3.0, deg_div_field_plate=3.0 → CONVERGED  (pflux_div_heat_load_mw = 1.493)
+[15/25] f_div_flux_expansion=3.0, deg_div_field_plate=5.0 → CONVERGED  (pflux_div_heat_load_mw = 0.8963)
+[16/25] f_div_flux_expansion=4.0, deg_div_field_plate=0.5 → CONVERGED  (pflux_div_heat_load_mw = 6.717)
+[17/25] f_div_flux_expansion=4.0, deg_div_field_plate=1.0 → CONVERGED  (pflux_div_heat_load_mw = 3.359)
+[18/25] f_div_flux_expansion=4.0, deg_div_field_plate=2.0 → CONVERGED  (pflux_div_heat_load_mw = 1.68)
+[19/25] f_div_flux_expansion=4.0, deg_div_field_plate=3.0 → CONVERGED  (pflux_div_heat_load_mw = 1.12)
+[20/25] f_div_flux_expansion=4.0, deg_div_field_plate=5.0 → CONVERGED  (pflux_div_heat_load_mw = 0.6725)
+[21/25] f_div_flux_expansion=5.0, deg_div_field_plate=0.5 → CONVERGED  (pflux_div_heat_load_mw = 5.375)
+[22/25] f_div_flux_expansion=5.0, deg_div_field_plate=1.0 → CONVERGED  (pflux_div_heat_load_mw = 2.687)
+[23/25] f_div_flux_expansion=5.0, deg_div_field_plate=2.0 → CONVERGED  (pflux_div_heat_load_mw = 1.344)
+[24/25] f_div_flux_expansion=5.0, deg_div_field_plate=3.0 → CONVERGED  (pflux_div_heat_load_mw = 0.8962)
+[25/25] f_div_flux_expansion=5.0, deg_div_field_plate=5.0 → CONVERGED  (pflux_div_heat_load_mw = 0.5381)
+
+Saved: manual_scans/f_div_flux_expansion_deg_div_field_plate_20260510_170747/results.csv
+Saved: manual_scans/f_div_flux_expansion_deg_div_field_plate_20260510_170747/2d_contour_pflux_div_heat_load_mw.png
+Saved: manual_scans/f_div_flux_expansion_deg_div_field_plate_20260510_170747/2d_curves_pflux_div_heat_load_mw.png
