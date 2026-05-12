@@ -105,6 +105,8 @@ Per MFILE che contengono uno scan 2D (`isweep`, `isweep_2`). Genera due PNG:
 Fallback `--xvalues` / `--yvalues` per le scan variables non scritte nell'MFILE.
 
 #### [13] `manual-scan` — sweep manuale 1D su variabili senza `nsweep`
+> 💡 **Consigliato per gli scan**: anche quando la variabile ha un `nsweep` dedicato, conviene usare `manual-scan` invece dello scan nativo di PROCESS. Lanciando un run indipendente per ogni valore (con guess iniziali "pulite" dal template) si ottiene una **convergenza nettamente migliore** rispetto allo scan nativo, che tende a portarsi dietro lo stato del punto precedente e a divergere ai bordi del range.
+
 PROCESS supporta gli scan nativi solo per variabili con un codice `nsweep` dedicato (es. 52 per `rad_fraction_sol`). Variabili interessanti del modello del divertore di Wade come `f_div_flux_expansion` e `deg_div_field_plate` **non** lo hanno. Questo comando automatizza il workflow:
 
 1. Per ogni valore della lista: modifica l'IN.DAT (rimpiazza/aggiunge la riga `<var> = <val>`), lancia PROCESS, sposta gli output in `<outdir>/in_files/` e `<outdir>/mfiles/`, estrae `ifail` e le variabili di output richieste.
