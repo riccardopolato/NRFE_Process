@@ -1042,6 +1042,159 @@ def cmd_manual_scan_2d(args):
     return 0
 
 
+def cmd_replot_2d(args):
+    """Rigenera plot 2D (contour + famiglia di curve) da MFILE esistenti, senza rilanciare PROCESS.
+
+    Pensato per quando hai già fatto un manual-scan-2d, hai tenuto gli MFILE in `mfiles/`,
+    e vuoi adesso plottare un altro output (che è già nell'MFILE) senza dover rifare i run.
+    """
+    try:
+        import numpy  # noqa: F401
+        import matplotlib  # noqa: F401
+        from process.io.mfile import MFile  # noqa: F401
+    except ImportError:
+        if os.environ.get("PROCESS_CLI_REEXECED"):
+            sys.exit(
+                f"[ERRORE] 'process' / numpy / matplotlib non importabili nemmeno con\n"
+                f"il python del venv ({VENV_PYTHON}). Verifica l'installazione di PROCESS."
+            )
+        _check_install()
+        argv = [
+            str(VENV_PYTHON), os.path.abspath(__file__), "replot-2d",
+            "--mfiles-dir", args.mfiles_dir,
+            "--var1", args.var1, "--var2", args.var2,
+            "--outputs", args.outputs,
+        ]
+        if args.outdir:
+            argv += ["--outdir", args.outdir]
+        env = os.environ.copy()
+        env["PROCESS_CLI_REEXECED"] = "1"
+        return subprocess.call(argv, env=env)
+
+    import numpy as np
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from process.io.mfile import MFile
+
+    mfiles_dir = Path(args.mfiles_dir)
+    if not mfiles_dir.is_dir():
+        sys.exit(f"[ERRORE] '{mfiles_dir}' non è una directory")
+    mfile_paths = sorted(mfiles_dir.glob("*_MFILE.DAT"))
+    if not mfile_paths:
+        sys.exit(f"[ERRORE] nessun *_MFILE.DAT trovato in {mfiles_dir}")
+
+    outputs = [v.strip() for v in args.outputs.split(",") if v.strip()]
+    if not outputs:
+        sys.exit("[ERRORE] --outputs è vuoto")
+
+    print(f"[INFO] {len(mfile_paths)} MFILE in {mfiles_dir}")
+    print(f"[INFO] var1={args.var1}, var2={args.var2}, outputs={outputs}")
+
+    rows = []
+    for mfile_path in mfile_paths:
+        try:
+            m = MFile(mfile_path)
+        except Exception as e:
+            print(f"[WARN] {mfile_path.name}: errore apertura ({e}), skip")
+            continue
+        if args.var1 not in m.data:
+            print(f"[WARN] {mfile_path.name}: '{args.var1}' assente, skip")
+            continue
+        if args.var2 not in m.data:
+            print(f"[WARN] {mfile_path.name}: '{args.var2}' assente, skip")
+            continue
+        v1 = float(m.data[args.var1].get_scan(-1))
+        v2 = float(m.data[args.var2].get_scan(-1))
+        ifail = int(m.data["ifail"].get_scan(-1)) if "ifail" in m.data else 1
+        row = {"v1": v1, "v2": v2, "ifail": ifail}
+        for o in outputs:
+            row[o] = float(m.data[o].get_scan(-1)) if o in m.data else None
+        rows.append(row)
+
+    if not rows:
+        sys.exit("[ERRORE] nessun MFILE leggibile con var1/var2 richiesti")
+
+    values1 = sorted(set(r["v1"] for r in rows))
+    values2 = sorted(set(r["v2"] for r in rows))
+    n1, n2 = len(values1), len(values2)
+    if n1 * n2 != len(rows):
+        print(f"[WARN] grid {n1}×{n2}={n1*n2} non combacia con {len(rows)} MFILE: alcuni punti potrebbero essere mancanti o duplicati")
+
+    by_pair = {(r["v1"], r["v2"]): r for r in rows}
+    rows_sorted = []
+    for v1 in values1:
+        for v2 in values2:
+            r = by_pair.get((v1, v2),
+                            {"v1": v1, "v2": v2, "ifail": None,
+                             **{o: None for o in outputs}})
+            rows_sorted.append(r)
+
+    outdir = Path(args.outdir) if args.outdir else mfiles_dir.parent
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    v1_arr = np.array(values1, dtype=float)
+    v2_arr = np.array(values2, dtype=float)
+    ifail_grid = np.array(
+        [r["ifail"] if r["ifail"] is not None else -1 for r in rows_sorted]
+    ).reshape(n1, n2)
+    converged = ifail_grid == 1
+    ifail_flat = ifail_grid.flatten()
+    x_pts = np.repeat(v1_arr, n2)
+    y_pts = np.tile(v2_arr, n1)
+    finite_v2 = v2_arr[np.isfinite(v2_arr) & (v2_arr > 0)]
+    use_log_y = len(finite_v2) > 1 and (finite_v2.max() / finite_v2.min()) > 50
+
+    for outvar in outputs:
+        raw = [r.get(outvar) for r in rows_sorted]
+        if all(v is None for v in raw):
+            print(f"[WARN] '{outvar}' assente in tutti gli MFILE → grafici saltati")
+            continue
+        Z = np.array([np.nan if v is None else float(v) for v in raw]).reshape(n1, n2)
+        Z = np.where(converged, Z, np.nan)
+        outvar_safe = outvar.replace("(", "_").replace(")", "")
+
+        # Contour
+        fig, ax = plt.subplots(figsize=(8, 6))
+        Xg, Yg = np.meshgrid(v1_arr, v2_arr, indexing="ij")
+        cf = ax.contourf(Xg, Yg, Z, levels=20, cmap="viridis")
+        cs = ax.contour(Xg, Yg, Z, levels=10, colors="white", linewidths=0.7)
+        ax.clabel(cs, inline=True, fontsize=8, fmt="%.2g")
+        fig.colorbar(cf, ax=ax, label=outvar)
+        conv_mask = ifail_flat == 1
+        ax.scatter(x_pts[conv_mask], y_pts[conv_mask],
+                   marker="x", color="red", s=40, zorder=5, label="converged")
+        if (~conv_mask).any():
+            ax.scatter(x_pts[~conv_mask], y_pts[~conv_mask],
+                       marker="X", color="black", s=60, zorder=6, label="non-converged")
+        ax.set_xlabel(args.var1)
+        ax.set_ylabel(args.var2)
+        ax.set_title(f"{outvar} vs ({args.var1}, {args.var2})")
+        if use_log_y:
+            ax.set_yscale("log")
+        ax.legend(loc="best")
+        contour_path = outdir / f"2d_contour_{outvar_safe}.png"
+        fig.savefig(contour_path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        print(f"[OK] {contour_path}")
+
+        # Curves
+        fig, ax = plt.subplots(figsize=(8, 6))
+        for j in range(n2):
+            ax.plot(v1_arr, Z[:, j], "--o", label=f"{args.var2}={values2[j]:.2g}")
+        ax.set_xlabel(args.var1)
+        ax.set_ylabel(outvar)
+        ax.set_title(f"{outvar} vs {args.var1}, parametrico in {args.var2}")
+        ax.grid(True, ls=":", alpha=0.6)
+        ax.legend(loc="best", fontsize=9)
+        curves_path = outdir / f"2d_curves_{outvar_safe}.png"
+        fig.savefig(curves_path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        print(f"[OK] {curves_path}")
+
+    return 0
+
+
 # ----------------------------------------------------------------------------
 # Modalità interattiva
 # ----------------------------------------------------------------------------
@@ -1215,6 +1368,22 @@ def _i_read():
     return cmd_read(argparse.Namespace(mfile=m, variables=vars_str.split()))
 
 
+def _i_replot_2d():
+    mfiles_dir = _ask("Cartella con gli MFILE (es. manual_scans/DIV/<scan>/mfiles)")
+    if not mfiles_dir or not Path(mfiles_dir).is_dir():
+        print(f"Path '{mfiles_dir}' non valido.")
+        return 1
+    var1 = _ask("Nome variabile 1 (asse X)", "f_div_flux_expansion")
+    var2 = _ask("Nome variabile 2 (asse Y)", "deg_div_field_plate")
+    outputs = _ask("Output da plottare (CSV, anche più di uno)",
+                   "pflux_div_heat_load_mw")
+    outdir = _pick_dir("Cartella output per i plot?", default="Figure_DIV")
+    return cmd_replot_2d(argparse.Namespace(
+        mfiles_dir=mfiles_dir, var1=var1, var2=var2,
+        outputs=outputs, outdir=outdir or None,
+    ))
+
+
 def _i_manual_scan_2d():
     template = _pick_file("Quale IN.DAT template?", ["*_IN.DAT"])
     var1 = _ask("Nome variabile 1 (loop esterno)", "f_div_flux_expansion")
@@ -1288,6 +1457,7 @@ INTERACTIVE_MENU = [
     ("manual-scan", "Sweep manuale su variabile senza nsweep dedicato", _i_manual_scan),
     ("manual-scan-2d", "Sweep manuale 2D su due variabili",              _i_manual_scan_2d),
     ("compare-runs", "Confronta N MFILE su variabili custom (tabella+CSV+barre)", _i_compare_runs),
+    ("replot-2d",  "Rigenera plot 2D da MFILE esistenti (no PROCESS)",  _i_replot_2d),
 ]
 
 
@@ -1439,6 +1609,20 @@ def build_parser():
                    help="cartella di output (default: Figure_HCD/)")
     s.add_argument("--title", help="titolo del grafico (opzionale)")
     s.set_defaults(func=cmd_compare_runs)
+
+    s = sub.add_parser(
+        "replot-2d",
+        help="Rigenera plot 2D (contour + curve) da MFILE esistenti, senza rilanciare PROCESS",
+    )
+    s.add_argument("--mfiles-dir", required=True, dest="mfiles_dir",
+                   help="cartella con gli MFILE (es. manual_scans/DIV/<scan>/mfiles)")
+    s.add_argument("--var1", required=True, help="variabile loop esterno (asse X)")
+    s.add_argument("--var2", required=True, help="variabile loop interno (asse Y)")
+    s.add_argument("--outputs", required=True,
+                   help='CSV di variabili da plottare (es. "te0,bt,p_plant_electric_net_mw")')
+    s.add_argument("--outdir",
+                   help="cartella di output (default: cartella parent di --mfiles-dir)")
+    s.set_defaults(func=cmd_replot_2d)
 
     return p
 
