@@ -1042,12 +1042,19 @@ def cmd_manual_scan_2d(args):
     return 0
 
 
-def cmd_replot_2d(args):
-    """Rigenera plot 2D (contour + famiglia di curve) da MFILE esistenti, senza rilanciare PROCESS.
+def cmd_replot(args):
+    """Rigenera plot 1D o 2D da MFILE esistenti, senza rilanciare PROCESS.
 
-    Pensato per quando hai già fatto un manual-scan-2d, hai tenuto gli MFILE in `mfiles/`,
-    e vuoi adesso plottare un altro output (che è già nell'MFILE) senza dover rifare i run.
+    Pensato per quando hai già fatto un manual-scan / manual-scan-2d, hai tenuto
+    gli MFILE in `mfiles/`, e vuoi adesso plottare un altro output (che è già
+    nell'MFILE) senza dover rifare i run.
+
+    Modalità:
+      - 1D: solo --var1 → un plot per output, x=var1.
+      - 2D: --var1 + --var2 → contour + famiglia di curve per output.
     """
+    is_2d = bool(getattr(args, "var2", None))
+
     try:
         import numpy  # noqa: F401
         import matplotlib  # noqa: F401
@@ -1060,11 +1067,13 @@ def cmd_replot_2d(args):
             )
         _check_install()
         argv = [
-            str(VENV_PYTHON), os.path.abspath(__file__), "replot-2d",
+            str(VENV_PYTHON), os.path.abspath(__file__), "replot",
             "--mfiles-dir", args.mfiles_dir,
-            "--var1", args.var1, "--var2", args.var2,
+            "--var1", args.var1,
             "--outputs", args.outputs,
         ]
+        if is_2d:
+            argv += ["--var2", args.var2]
         if args.outdir:
             argv += ["--outdir", args.outdir]
         env = os.environ.copy()
@@ -1089,7 +1098,10 @@ def cmd_replot_2d(args):
         sys.exit("[ERRORE] --outputs è vuoto")
 
     print(f"[INFO] {len(mfile_paths)} MFILE in {mfiles_dir}")
-    print(f"[INFO] var1={args.var1}, var2={args.var2}, outputs={outputs}")
+    if is_2d:
+        print(f"[INFO] modalità 2D: var1={args.var1}, var2={args.var2}, outputs={outputs}")
+    else:
+        print(f"[INFO] modalità 1D: var1={args.var1}, outputs={outputs}")
 
     rows = []
     for mfile_path in mfile_paths:
@@ -1101,20 +1113,57 @@ def cmd_replot_2d(args):
         if args.var1 not in m.data:
             print(f"[WARN] {mfile_path.name}: '{args.var1}' assente, skip")
             continue
-        if args.var2 not in m.data:
+        if is_2d and args.var2 not in m.data:
             print(f"[WARN] {mfile_path.name}: '{args.var2}' assente, skip")
             continue
         v1 = float(m.data[args.var1].get_scan(-1))
-        v2 = float(m.data[args.var2].get_scan(-1))
         ifail = int(m.data["ifail"].get_scan(-1)) if "ifail" in m.data else 1
-        row = {"v1": v1, "v2": v2, "ifail": ifail}
+        row = {"v1": v1, "ifail": ifail}
+        if is_2d:
+            row["v2"] = float(m.data[args.var2].get_scan(-1))
         for o in outputs:
             row[o] = float(m.data[o].get_scan(-1)) if o in m.data else None
         rows.append(row)
 
     if not rows:
-        sys.exit("[ERRORE] nessun MFILE leggibile con var1/var2 richiesti")
+        sys.exit("[ERRORE] nessun MFILE leggibile con le variabili richieste")
 
+    outdir = Path(args.outdir) if args.outdir else mfiles_dir.parent
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    if not is_2d:
+        rows.sort(key=lambda r: r["v1"])
+        x = np.array([r["v1"] for r in rows], dtype=float)
+        ifails = np.array([r["ifail"] if r["ifail"] is not None else -1 for r in rows])
+        converged = ifails == 1
+
+        for outvar in outputs:
+            yvals = [r.get(outvar) for r in rows]
+            if all(v is None for v in yvals):
+                print(f"[WARN] '{outvar}' assente in tutti gli MFILE → grafico saltato")
+                continue
+            y = np.array([np.nan if v is None else float(v) for v in yvals], dtype=float)
+            outvar_safe = outvar.replace("(", "_").replace(")", "")
+
+            fig, ax = plt.subplots(figsize=(8, 6))
+            ax.plot(x, y, "--", color="steelblue", alpha=0.7)
+            ax.scatter(x[converged], y[converged], marker="o", color="steelblue",
+                       s=60, label="converged", zorder=3)
+            if (~converged).any():
+                ax.scatter(x[~converged], y[~converged], marker="x", color="red",
+                           s=80, label="non-converged", zorder=4)
+                ax.legend()
+            ax.set_xlabel(args.var1)
+            ax.set_ylabel(outvar)
+            ax.set_title(f"{outvar} vs {args.var1}")
+            ax.grid(True, ls=":", alpha=0.6)
+            plot_path = outdir / f"1d_{outvar_safe}.png"
+            fig.savefig(plot_path, dpi=150, bbox_inches="tight")
+            plt.close(fig)
+            print(f"[OK] {plot_path}")
+        return 0
+
+    # 2D
     values1 = sorted(set(r["v1"] for r in rows))
     values2 = sorted(set(r["v2"] for r in rows))
     n1, n2 = len(values1), len(values2)
@@ -1129,9 +1178,6 @@ def cmd_replot_2d(args):
                             {"v1": v1, "v2": v2, "ifail": None,
                              **{o: None for o in outputs}})
             rows_sorted.append(r)
-
-    outdir = Path(args.outdir) if args.outdir else mfiles_dir.parent
-    outdir.mkdir(parents=True, exist_ok=True)
 
     v1_arr = np.array(values1, dtype=float)
     v2_arr = np.array(values2, dtype=float)
@@ -1368,18 +1414,18 @@ def _i_read():
     return cmd_read(argparse.Namespace(mfile=m, variables=vars_str.split()))
 
 
-def _i_replot_2d():
-    mfiles_dir = _ask("Cartella con gli MFILE (es. manual_scans/DIV/<scan>/mfiles)")
+def _i_replot():
+    mfiles_dir = _ask("Cartella con gli MFILE (es. manual_scans/<scan>/mfiles)")
     if not mfiles_dir or not Path(mfiles_dir).is_dir():
         print(f"Path '{mfiles_dir}' non valido.")
         return 1
     var1 = _ask("Nome variabile 1 (asse X)", "f_div_flux_expansion")
-    var2 = _ask("Nome variabile 2 (asse Y)", "deg_div_field_plate")
+    var2 = _ask("Nome variabile 2 (vuoto = scan 1D)", "")
     outputs = _ask("Output da plottare (CSV, anche più di uno)",
                    "pflux_div_heat_load_mw")
     outdir = _pick_dir("Cartella output per i plot?", default="Figure_DIV")
-    return cmd_replot_2d(argparse.Namespace(
-        mfiles_dir=mfiles_dir, var1=var1, var2=var2,
+    return cmd_replot(argparse.Namespace(
+        mfiles_dir=mfiles_dir, var1=var1, var2=(var2 or None),
         outputs=outputs, outdir=outdir or None,
     ))
 
@@ -1457,7 +1503,7 @@ INTERACTIVE_MENU = [
     ("manual-scan", "Sweep manuale su variabile senza nsweep dedicato", _i_manual_scan),
     ("manual-scan-2d", "Sweep manuale 2D su due variabili",              _i_manual_scan_2d),
     ("compare-runs", "Confronta N MFILE su variabili custom (tabella+CSV+barre)", _i_compare_runs),
-    ("replot-2d",  "Rigenera plot 2D da MFILE esistenti (no PROCESS)",  _i_replot_2d),
+    ("replot",     "Rigenera plot 1D/2D da MFILE esistenti (no PROCESS)", _i_replot),
 ]
 
 
@@ -1611,18 +1657,19 @@ def build_parser():
     s.set_defaults(func=cmd_compare_runs)
 
     s = sub.add_parser(
-        "replot-2d",
-        help="Rigenera plot 2D (contour + curve) da MFILE esistenti, senza rilanciare PROCESS",
+        "replot",
+        help="Rigenera plot 1D o 2D da MFILE esistenti, senza rilanciare PROCESS",
     )
     s.add_argument("--mfiles-dir", required=True, dest="mfiles_dir",
-                   help="cartella con gli MFILE (es. manual_scans/DIV/<scan>/mfiles)")
-    s.add_argument("--var1", required=True, help="variabile loop esterno (asse X)")
-    s.add_argument("--var2", required=True, help="variabile loop interno (asse Y)")
+                   help="cartella con gli MFILE (es. manual_scans/<scan>/mfiles)")
+    s.add_argument("--var1", required=True, help="variabile asse X (in 2D: loop esterno)")
+    s.add_argument("--var2", default=None,
+                   help="variabile asse Y per scan 2D (omettere per scan 1D)")
     s.add_argument("--outputs", required=True,
                    help='CSV di variabili da plottare (es. "te0,bt,p_plant_electric_net_mw")')
     s.add_argument("--outdir",
                    help="cartella di output (default: cartella parent di --mfiles-dir)")
-    s.set_defaults(func=cmd_replot_2d)
+    s.set_defaults(func=cmd_replot)
 
     return p
 

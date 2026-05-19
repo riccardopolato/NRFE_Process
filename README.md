@@ -59,7 +59,7 @@ python3 scripts/process_cli.py <comando> [argomenti]
 python3 scripts/process_cli.py <comando> --help    # opzioni del singolo comando
 ```
 
-### Le 15 voci del menu
+### Le 16 voci del menu
 
 #### [1] `run` — lancia un singolo run di PROCESS
 Prende un file `*_IN.DAT` e lancia la simulazione. Genera nella stessa cartella dell'input: `*_OUT.DAT` (umano), `*_MFILE.DAT` (machine-readable, lo usano tutti gli altri comandi), `*_SIG_TF.json` (tensioni TF), `*_process.log`.
@@ -164,6 +164,34 @@ python3 scripts/process_cli.py compare-runs \
 
 > Servono almeno 2 MFILE; `--mfiles` e `--labels` devono avere lo stesso numero di elementi. Variabili non presenti in un MFILE diventano `N/A` (warning a console + cella vuota in tabella/CSV/grafico).
 
+#### [16] `replot` — rigenera plot 1D o 2D da MFILE esistenti (senza rilanciare PROCESS)
+Dopo un `manual-scan` o `manual-scan-2d`, se hai conservato gli MFILE in `<outdir>/mfiles/`, questo comando legge direttamente quegli MFILE e produce i plot per **qualsiasi output già presente nell'MFILE**, senza dover rifare i run. Utile quando ti accorgi dopo lo sweep di voler plottare un'altra variabile, o per cambiare la lista di output da graficare senza pagare un altro paio d'ore di calcolo.
+
+La modalità (1D o 2D) si decide in base alla presenza di `--var2`:
+- solo `--var1` → **1D**, un PNG per output: `1d_<output>.png` (linea con marker, `x` rossi sui non-converged);
+- `--var1` + `--var2` → **2D**, due PNG per output (stessi nomi/format di `manual-scan-2d`):
+  - `2d_contour_<output>.png` — heatmap `viridis`, marker `x` rossi sui converged + `X` neri sui non-converged, asse Y in log se range > 50×;
+  - `2d_curves_<output>.png` — famiglia di curve, una per ogni valore di `var2`.
+
+```bash
+# 1D: replot di un manual-scan
+python3 scripts/process_cli.py replot \
+    --mfiles-dir manual_scans/scan_rad/mfiles \
+    --var1 rad_fraction_sol \
+    --outputs "te0,bt,p_plant_electric_net_mw" \
+    --outdir manual_scans/scan_rad
+
+# 2D: replot di un manual-scan-2d
+python3 scripts/process_cli.py replot \
+    --mfiles-dir manual_scans/scan2d_geom/mfiles \
+    --var1 f_div_flux_expansion \
+    --var2 deg_div_field_plate \
+    --outputs "te0,bt,p_plant_electric_net_mw" \
+    --outdir manual_scans/scan2d_geom
+```
+
+> `--var1`(/`--var2`) devono essere le stesse variabili del `manual-scan(-2d)` originale (servono a ricostruire l'asse / la griglia). Se `--outdir` non è passato, i PNG finiscono nella cartella **parent** di `--mfiles-dir`. Punti mancanti o output non presenti nell'MFILE producono solo un warning, non un errore.
+
 ### ⚠️ Pulizia degli output di `manual-scan` / `manual-scan-2d`
 
 Per **non appesantire la cartella locale**, dopo aver verificato i risultati di uno sweep conviene **cancellare manualmente** le sottocartelle pesanti, lasciando solo i `.csv` (e opzionalmente i `.png` e `log.txt`).
@@ -173,7 +201,7 @@ Ogni sweep produce in `manual_scans/<scan_name>/`:
 | Cartella / file        | Cosa contiene                                  | Da tenere?                       |
 |------------------------|-----------------------------------------------|----------------------------------|
 | `in_files/`            | i file `IN.DAT` modificati                    | ❌ **cancellare**                |
-| `mfiles/`              | `MFILE.DAT` (~50 MB l'uno!), `OUT.DAT`, ecc.  | ❌ **cancellare**                |
+| `mfiles/`              | `MFILE.DAT` (~50 MB l'uno!), `OUT.DAT`, ecc.  | ❌ **cancellare** — ma se pensi di voler usare `[16] replot` su un altro output, tienili finché non hai estratto tutto |
 | `results.csv`          | tabella riassuntiva (qualche KB)              | ✅ tenere — contiene tutti i dati |
 | `plot_*.png`, `2d_*.png`, `summary.png` | i grafici generati                | ✅ tenere (se servono al report)  |
 | `log.txt`              | log dei run                                   | ✅ tenere (utile per debug)      |
