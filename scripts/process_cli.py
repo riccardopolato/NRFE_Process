@@ -134,9 +134,11 @@ def cmd_compare_runs(args):
       - bar chart con un subplot per variabile in <outdir>/compare_runs_bars.png
     """
     try:
-        import numpy  # noqa: F401
-        import matplotlib  # noqa: F401
-        from process.io.mfile import MFile  # noqa: F401
+        import numpy as np
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from process.io.mfile import MFile
     except ImportError:
         if os.environ.get("PROCESS_CLI_REEXECED"):
             sys.exit(
@@ -156,12 +158,6 @@ def cmd_compare_runs(args):
         env = os.environ.copy()
         env["PROCESS_CLI_REEXECED"] = "1"
         return subprocess.call(argv, env=env)
-
-    import numpy as np
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    from process.io.mfile import MFile
 
     if len(args.mfiles) != len(args.labels):
         sys.exit(
@@ -423,9 +419,11 @@ def cmd_plot1d(args):
     'X does not exist in PROCESS dicts' (constrained vars come rad_fraction_sol).
     """
     try:
-        import numpy  # noqa: F401
-        import matplotlib  # noqa: F401
-        from process.io.mfile import MFile  # noqa: F401
+        import numpy as np
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from process.io.mfile import MFile
     except ImportError:
         if os.environ.get("PROCESS_CLI_REEXECED"):
             sys.exit(
@@ -442,12 +440,6 @@ def cmd_plot1d(args):
         env = os.environ.copy()
         env["PROCESS_CLI_REEXECED"] = "1"
         return subprocess.call(argv, env=env)
-
-    import numpy as np
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    from process.io.mfile import MFile
 
     m = MFile(args.mfile)
     if "isweep" not in m.data:
@@ -531,9 +523,11 @@ def cmd_plot2d(args):
     # interprete, ri-lancia lo script con il python del venv di PROCESS.
     # Guardia anti-loop: PROCESS_CLI_REEXECED evita ricorsione infinita.
     try:
-        import numpy  # noqa: F401
-        import matplotlib  # noqa: F401
-        from process.io.mfile import MFile  # noqa: F401
+        import numpy as np
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from process.io.mfile import MFile
     except ImportError:
         if os.environ.get("PROCESS_CLI_REEXECED"):
             sys.exit(
@@ -553,12 +547,6 @@ def cmd_plot2d(args):
         env = os.environ.copy()
         env["PROCESS_CLI_REEXECED"] = "1"
         return subprocess.call(argv, env=env)
-
-    import numpy as np
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    from process.io.mfile import MFile
 
     m = MFile(args.mfile)
     if "isweep" not in m.data or "isweep_2" not in m.data:
@@ -1374,9 +1362,11 @@ def cmd_replot(args):
     gli MFILE, e vuoi plottare un altro output senza rifare i run.
     """
     try:
-        import numpy  # noqa: F401
-        import matplotlib  # noqa: F401
-        from process.io.mfile import MFile  # noqa: F401
+        import numpy as np
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from process.io.mfile import MFile
     except ImportError:
         if os.environ.get("PROCESS_CLI_REEXECED"):
             sys.exit(
@@ -1397,12 +1387,6 @@ def cmd_replot(args):
         env = os.environ.copy()
         env["PROCESS_CLI_REEXECED"] = "1"
         return subprocess.call(argv, env=env)
-
-    import numpy as np
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    from process.io.mfile import MFile
 
     mfiles_dir = Path(args.mfiles_dir)
     if not mfiles_dir.is_dir():
