@@ -311,6 +311,91 @@ def cmd_stress(args):
                  "-f", args.sig_tf, "-sf", "jpg"])
 
 
+def cmd_stress_summary(args):
+    """Stampa un riassunto numerico degli stress TF coil + Central Solenoid da un MFILE.
+
+    Variabili lette:
+      - s_shear_tf_peak(1..3)   Tresca peak nei 3 layer del TF coil  (Pa)
+      - sig_tf_case_max         allowable Tresca per il case TF       (Pa)
+      - sig_tf_wp_max           allowable Tresca per il winding pack  (Pa)
+      - s_shear_cs_peak         Tresca peak nello steel del CS        (Pa)
+      - alstroh                 allowable Tresca CS steel             (Pa)
+      - ineq_con072             residue normalizzato del vincolo CS Tresca
+    """
+    _check_install()
+    snippet = (
+        "import sys, json;"
+        "from process.io.mfile import MFile;"
+        "m = MFile(sys.argv[1]);"
+        "g = lambda k: (float(m.data[k].get_scan(-1)) if k in m.data else None);"
+        "out = {"
+        "  'tf_layers': [g(f's_shear_tf_peak({i})') for i in (1, 2, 3)],"
+        "  'tf_case_max': g('sig_tf_case_max'),"
+        "  'tf_wp_max': g('sig_tf_wp_max'),"
+        "  'cs_peak': g('s_shear_cs_peak'),"
+        "  'cs_allow': g('alstroh'),"
+        "  'cs_residue': g('ineq_con072'),"
+        "};"
+        "print('JSON_OUT:' + json.dumps(out))"
+    )
+    res = subprocess.run(
+        [str(VENV_PYTHON), "-c", snippet, args.mfile],
+        capture_output=True, text=True,
+    )
+    if res.returncode != 0:
+        sys.exit(f"[ERRORE] lettura MFILE fallita:\n{res.stderr}")
+
+    import json
+    data = None
+    for line in res.stdout.splitlines():
+        if line.startswith("JSON_OUT:"):
+            data = json.loads(line[len("JSON_OUT:"):])
+            break
+    if data is None:
+        sys.exit("[ERRORE] nessun JSON output dalla lettura MFILE")
+
+    def fmt_mpa(v):
+        return f"{v/1e6:8.2f} MPa" if v is not None else "    N/A    "
+
+    def util(v, allow):
+        if v is None or allow is None or allow == 0:
+            return ""
+        pct = 100.0 * v / allow
+        flag = ""
+        if pct > 100:
+            flag = "  ❌ EXCEEDS LIMIT"
+        elif pct > 95:
+            flag = "  ⚠️  near limit"
+        return f"   ({pct:5.1f}% of allowable){flag}"
+
+    print()
+    print(f"=== Stress summary — {args.mfile} ===\n")
+
+    print("TF coil (Tresca peak shear stress):")
+    layers = data["tf_layers"]
+    for i, v in enumerate(layers, 1):
+        print(f"  Layer {i}:                  {fmt_mpa(v)}")
+    print(f"  Allowable (case):         {fmt_mpa(data['tf_case_max'])}")
+    print(f"  Allowable (WP/conduit):   {fmt_mpa(data['tf_wp_max'])}")
+
+    finite_layers = [v for v in layers if v is not None]
+    finite_allow = [a for a in (data["tf_case_max"], data["tf_wp_max"]) if a is not None]
+    if finite_layers and finite_allow:
+        peak = max(finite_layers)
+        allow_min = min(finite_allow)
+        print(f"  → Peak vs min(allowable): {fmt_mpa(peak)}{util(peak, allow_min)}")
+    print()
+
+    print("Central Solenoid (Tresca peak shear stress):")
+    print(f"  Peak (CS steel):          {fmt_mpa(data['cs_peak'])}{util(data['cs_peak'], data['cs_allow'])}")
+    print(f"  Allowable (alstroh):      {fmt_mpa(data['cs_allow'])}")
+    if data["cs_residue"] is not None:
+        sign = "OK margine" if data["cs_residue"] > 0 else "VIOLATO"
+        print(f"  Tresca constraint residue: {data['cs_residue']:+.4g}   ({sign})")
+    print()
+    return 0
+
+
 def cmd_new_in(args):
     _check_install()
     return _run([
@@ -1042,128 +1127,159 @@ def cmd_manual_scan_2d(args):
     return 0
 
 
-def cmd_replot(args):
-    """Rigenera plot 1D o 2D da MFILE esistenti, senza rilanciare PROCESS.
+def _write_replot_csv(rows, outputs, var1, var2, outdir):
+    """Scrive/aggiorna outdir/results.csv con le colonne di output del replot.
 
-    Pensato per quando hai già fatto un manual-scan / manual-scan-2d, hai tenuto
-    gli MFILE in `mfiles/`, e vuoi adesso plottare un altro output (che è già
-    nell'MFILE) senza dover rifare i run.
-
-    Modalità:
-      - 1D: solo --var1 → un plot per output, x=var1.
-      - 2D: --var1 + --var2 → contour + famiglia di curve per output.
+    - Se results.csv NON esiste → lo crea con [var1(, var2), ifail, *outputs].
+    - Se esiste e contiene le colonne chiave (var1[, var2]) → unisce le nuove
+      colonne di output alle righe esistenti, abbinandole per valore della/e
+      variabile/i di scan (confronto float con tolleranza). Le colonne già
+      presenti sono preservate, quelle nuove aggiunte in coda. Così dopo un
+      manual-scan puoi rifare replot con altri output e ritrovarteli tutti
+      nello stesso CSV, pronti per Excel.
+    - Se esiste ma NON ha le colonne chiave attese → per non rovinare il file
+      scrive a parte su results_replot.csv.
     """
-    is_2d = bool(getattr(args, "var2", None))
+    import csv as _csv
 
-    try:
-        import numpy  # noqa: F401
-        import matplotlib  # noqa: F401
-        from process.io.mfile import MFile  # noqa: F401
-    except ImportError:
-        if os.environ.get("PROCESS_CLI_REEXECED"):
-            sys.exit(
-                f"[ERRORE] 'process' / numpy / matplotlib non importabili nemmeno con\n"
-                f"il python del venv ({VENV_PYTHON}). Verifica l'installazione di PROCESS."
-            )
-        _check_install()
-        argv = [
-            str(VENV_PYTHON), os.path.abspath(__file__), "replot",
-            "--mfiles-dir", args.mfiles_dir,
-            "--var1", args.var1,
-            "--outputs", args.outputs,
-        ]
-        if is_2d:
-            argv += ["--var2", args.var2]
-        if args.outdir:
-            argv += ["--outdir", args.outdir]
-        env = os.environ.copy()
-        env["PROCESS_CLI_REEXECED"] = "1"
-        return subprocess.call(argv, env=env)
+    is_2d = bool(var2)
+    key_cols = [var1, var2] if is_2d else [var1]
+    csv_path = outdir / "results.csv"
 
-    import numpy as np
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    from process.io.mfile import MFile
+    def _row_values(r):
+        keys = [r["v1"], r["v2"]] if is_2d else [r["v1"]]
+        return keys + [r["ifail"]] + [r.get(o) for o in outputs]
 
-    mfiles_dir = Path(args.mfiles_dir)
-    if not mfiles_dir.is_dir():
-        sys.exit(f"[ERRORE] '{mfiles_dir}' non è una directory")
-    mfile_paths = sorted(mfiles_dir.glob("*_MFILE.DAT"))
-    if not mfile_paths:
-        sys.exit(f"[ERRORE] nessun *_MFILE.DAT trovato in {mfiles_dir}")
+    def _write_fresh(path):
+        with open(path, "w", newline="") as f:
+            w = _csv.writer(f)
+            w.writerow(key_cols + ["ifail"] + outputs)
+            for r in rows:
+                w.writerow(_row_values(r))
 
-    outputs = [v.strip() for v in args.outputs.split(",") if v.strip()]
-    if not outputs:
-        sys.exit("[ERRORE] --outputs è vuoto")
+    if not csv_path.exists():
+        _write_fresh(csv_path)
+        print(f"[OK] {csv_path}")
+        return
 
-    print(f"[INFO] {len(mfile_paths)} MFILE in {mfiles_dir}")
-    if is_2d:
-        print(f"[INFO] modalità 2D: var1={args.var1}, var2={args.var2}, outputs={outputs}")
-    else:
-        print(f"[INFO] modalità 1D: var1={args.var1}, outputs={outputs}")
+    with open(csv_path, newline="") as f:
+        reader = _csv.DictReader(f)
+        fieldnames = list(reader.fieldnames or [])
+        existing = list(reader)
 
-    rows = []
-    for mfile_path in mfile_paths:
+    if not all(kc in fieldnames for kc in key_cols):
+        alt = outdir / "results_replot.csv"
+        _write_fresh(alt)
+        print(f"[WARN] {csv_path.name} non ha le colonne {key_cols}: scrivo su {alt}")
+        print(f"[OK] {alt}")
+        return
+
+    def _key_of(row_dict):
         try:
-            m = MFile(mfile_path)
-        except Exception as e:
-            print(f"[WARN] {mfile_path.name}: errore apertura ({e}), skip")
+            return tuple(float(row_dict[kc]) for kc in key_cols)
+        except (TypeError, ValueError):
+            return None
+
+    existing_keys = [_key_of(r) for r in existing]
+    existing_by_key = {k: er for k, er in zip(existing_keys, existing) if k is not None}
+
+    # Per ogni asse costruisco uno "snapper" che aggancia il valore riletto
+    # dall'MFILE al valore di griglia esistente più vicino, se entro metà del
+    # passo minimo di quell'asse. In questo modo piccole differenze di precisione
+    # tra il valore scritto dal manual-scan e quello dell'MFILE non creano righe
+    # doppie, e due punti di griglia distinti non possono fondersi per sbaglio.
+    def _make_snapper(axis):
+        vals = sorted({k[axis] for k in existing_keys if k is not None})
+        if len(vals) >= 2:
+            tol = 0.49 * min(b - a for a, b in zip(vals, vals[1:]))
+        elif len(vals) == 1:
+            tol = max(abs(vals[0]) * 1e-6, 1e-12)
+        else:
+            tol = 0.0
+
+        def snap(v):
+            if not vals:
+                return v
+            nearest = min(vals, key=lambda x: abs(x - v))
+            return nearest if abs(nearest - v) <= tol else v
+
+        return snap
+
+    snappers = [_make_snapper(i) for i in range(len(key_cols))]
+
+    for o in outputs:
+        if o not in fieldnames:
+            fieldnames.append(o)
+
+    appended = 0
+    for r in rows:
+        raw = (r["v1"], r["v2"]) if is_2d else (r["v1"],)
+        snapped = tuple(snap(float(v)) for snap, v in zip(snappers, raw))
+        target = existing_by_key.get(snapped)
+        if target is not None:
+            for o in outputs:
+                target[o] = r.get(o)
+        else:
+            new = {c: "" for c in fieldnames}
+            new[var1] = r["v1"]
+            if is_2d:
+                new[var2] = r["v2"]
+            if "ifail" in fieldnames:
+                new["ifail"] = r["ifail"]
+            for o in outputs:
+                new[o] = r.get(o)
+            existing.append(new)
+            existing_by_key[snapped] = new
+            appended += 1
+
+    with open(csv_path, "w", newline="") as f:
+        w = _csv.DictWriter(f, fieldnames=fieldnames)
+        w.writeheader()
+        w.writerows(existing)
+    print(f"[OK] {csv_path} (colonne aggiornate: {', '.join(outputs)})")
+    if appended:
+        print(f"[WARN] {appended} righe del replot non combaciavano con righe "
+              f"esistenti in {csv_path.name} e sono state aggiunte in fondo "
+              f"(possibile disallineamento dei valori di {', '.join(key_cols)}).")
+
+
+def _replot_1d(rows, outputs, var1, outdir, np, plt):
+    """Plot 1D: ogni output vs var1, da righe già lette dagli MFILE."""
+    rows_sorted = sorted(rows, key=lambda r: r["v1"])
+    x = np.array([r["v1"] for r in rows_sorted], dtype=float)
+    ifail = np.array([r["ifail"] if r["ifail"] is not None else -1 for r in rows_sorted])
+    converged = ifail == 1
+
+    for outvar in outputs:
+        raw = [r.get(outvar) for r in rows_sorted]
+        if all(v is None for v in raw):
+            print(f"[WARN] '{outvar}' assente in tutti gli MFILE → grafico saltato")
             continue
-        if args.var1 not in m.data:
-            print(f"[WARN] {mfile_path.name}: '{args.var1}' assente, skip")
-            continue
-        if is_2d and args.var2 not in m.data:
-            print(f"[WARN] {mfile_path.name}: '{args.var2}' assente, skip")
-            continue
-        v1 = float(m.data[args.var1].get_scan(-1))
-        ifail = int(m.data["ifail"].get_scan(-1)) if "ifail" in m.data else 1
-        row = {"v1": v1, "ifail": ifail}
-        if is_2d:
-            row["v2"] = float(m.data[args.var2].get_scan(-1))
-        for o in outputs:
-            row[o] = float(m.data[o].get_scan(-1)) if o in m.data else None
-        rows.append(row)
+        y = np.array([np.nan if v is None else float(v) for v in raw], dtype=float)
+        y_masked = np.where(converged, y, np.nan)
 
-    if not rows:
-        sys.exit("[ERRORE] nessun MFILE leggibile con le variabili richieste")
+        fig, ax = plt.subplots(figsize=(8, 6))
+        ax.plot(x, y_masked, "--", color="steelblue", alpha=0.7)
+        ax.scatter(x[converged], y[converged], marker="o", color="steelblue",
+                   s=60, label="converged", zorder=3)
+        if (~converged).any():
+            ax.scatter(x[~converged], y[~converged], marker="x", color="red",
+                       s=80, label="non-converged", zorder=4)
+            ax.legend(loc="best")
+        ax.set_xlabel(var1)
+        ax.set_ylabel(outvar)
+        ax.set_title(f"{outvar} vs {var1}")
+        ax.grid(True, ls=":", alpha=0.6)
+        outvar_safe = outvar.replace("(", "_").replace(")", "")
+        out_path = outdir / f"1d_{outvar_safe}_vs_{var1}.png"
+        fig.savefig(out_path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        print(f"[OK] {out_path}")
+    return 0
 
-    outdir = Path(args.outdir) if args.outdir else mfiles_dir.parent
-    outdir.mkdir(parents=True, exist_ok=True)
 
-    if not is_2d:
-        rows.sort(key=lambda r: r["v1"])
-        x = np.array([r["v1"] for r in rows], dtype=float)
-        ifails = np.array([r["ifail"] if r["ifail"] is not None else -1 for r in rows])
-        converged = ifails == 1
-
-        for outvar in outputs:
-            yvals = [r.get(outvar) for r in rows]
-            if all(v is None for v in yvals):
-                print(f"[WARN] '{outvar}' assente in tutti gli MFILE → grafico saltato")
-                continue
-            y = np.array([np.nan if v is None else float(v) for v in yvals], dtype=float)
-            outvar_safe = outvar.replace("(", "_").replace(")", "")
-
-            fig, ax = plt.subplots(figsize=(8, 6))
-            ax.plot(x, y, "--", color="steelblue", alpha=0.7)
-            ax.scatter(x[converged], y[converged], marker="o", color="steelblue",
-                       s=60, label="converged", zorder=3)
-            if (~converged).any():
-                ax.scatter(x[~converged], y[~converged], marker="x", color="red",
-                           s=80, label="non-converged", zorder=4)
-                ax.legend()
-            ax.set_xlabel(args.var1)
-            ax.set_ylabel(outvar)
-            ax.set_title(f"{outvar} vs {args.var1}")
-            ax.grid(True, ls=":", alpha=0.6)
-            plot_path = outdir / f"1d_{outvar_safe}.png"
-            fig.savefig(plot_path, dpi=150, bbox_inches="tight")
-            plt.close(fig)
-            print(f"[OK] {plot_path}")
-        return 0
-
-    # 2D
+def _replot_2d(rows, outputs, var1, var2, outdir, np, plt):
+    """Plot 2D: contour + famiglia di curve, da righe già lette dagli MFILE."""
     values1 = sorted(set(r["v1"] for r in rows))
     values2 = sorted(set(r["v2"] for r in rows))
     n1, n2 = len(values1), len(values2)
@@ -1213,9 +1329,9 @@ def cmd_replot(args):
         if (~conv_mask).any():
             ax.scatter(x_pts[~conv_mask], y_pts[~conv_mask],
                        marker="X", color="black", s=60, zorder=6, label="non-converged")
-        ax.set_xlabel(args.var1)
-        ax.set_ylabel(args.var2)
-        ax.set_title(f"{outvar} vs ({args.var1}, {args.var2})")
+        ax.set_xlabel(var1)
+        ax.set_ylabel(var2)
+        ax.set_title(f"{outvar} vs ({var1}, {var2})")
         if use_log_y:
             ax.set_yscale("log")
         ax.legend(loc="best")
@@ -1227,18 +1343,119 @@ def cmd_replot(args):
         # Curves
         fig, ax = plt.subplots(figsize=(8, 6))
         for j in range(n2):
-            ax.plot(v1_arr, Z[:, j], "--o", label=f"{args.var2}={values2[j]:.2g}")
-        ax.set_xlabel(args.var1)
+            ax.plot(v1_arr, Z[:, j], "--o", label=f"{var2}={values2[j]:.2g}")
+        ax.set_xlabel(var1)
         ax.set_ylabel(outvar)
-        ax.set_title(f"{outvar} vs {args.var1}, parametrico in {args.var2}")
+        ax.set_title(f"{outvar} vs {var1}, parametrico in {var2}")
         ax.grid(True, ls=":", alpha=0.6)
         ax.legend(loc="best", fontsize=9)
         curves_path = outdir / f"2d_curves_{outvar_safe}.png"
         fig.savefig(curves_path, dpi=150, bbox_inches="tight")
         plt.close(fig)
         print(f"[OK] {curves_path}")
-
     return 0
+
+
+def cmd_replot(args):
+    """Rigenera plot da MFILE esistenti, senza rilanciare PROCESS.
+
+    - Se --var2 è dato  → replot 2D (contour + famiglia di curve) per ogni output.
+    - Se --var2 è vuoto → replot 1D (output vs var1) per ogni output.
+
+    Oltre ai plot scrive/aggiorna il results.csv ACCANTO agli MFILE (la cartella
+    dello scan, indipendente da --outdir): gli output richiesti vengono uniti
+    come colonne al CSV già prodotto dal manual-scan (abbinati per valore della
+    variabile di scan), così hai tutti i numeri in un solo file pronto per Excel.
+    NB: var1 dev'essere la variabile originariamente scansionata, altrimenti il
+    merge non trova la colonna chiave e scrive a parte. Dettagli in
+    _write_replot_csv.
+
+    Pensato per quando hai già fatto un manual-scan / manual-scan-2d, hai tenuto
+    gli MFILE, e vuoi plottare un altro output senza rifare i run.
+    """
+    try:
+        import numpy  # noqa: F401
+        import matplotlib  # noqa: F401
+        from process.io.mfile import MFile  # noqa: F401
+    except ImportError:
+        if os.environ.get("PROCESS_CLI_REEXECED"):
+            sys.exit(
+                f"[ERRORE] 'process' / numpy / matplotlib non importabili nemmeno con\n"
+                f"il python del venv ({VENV_PYTHON}). Verifica l'installazione di PROCESS."
+            )
+        _check_install()
+        argv = [
+            str(VENV_PYTHON), os.path.abspath(__file__), "replot",
+            "--mfiles-dir", args.mfiles_dir,
+            "--var1", args.var1,
+            "--outputs", args.outputs,
+        ]
+        if args.var2:
+            argv += ["--var2", args.var2]
+        if args.outdir:
+            argv += ["--outdir", args.outdir]
+        env = os.environ.copy()
+        env["PROCESS_CLI_REEXECED"] = "1"
+        return subprocess.call(argv, env=env)
+
+    import numpy as np
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from process.io.mfile import MFile
+
+    mfiles_dir = Path(args.mfiles_dir)
+    if not mfiles_dir.is_dir():
+        sys.exit(f"[ERRORE] '{mfiles_dir}' non è una directory")
+    mfile_paths = sorted(mfiles_dir.glob("*_MFILE.DAT"))
+    if not mfile_paths:
+        sys.exit(f"[ERRORE] nessun *_MFILE.DAT trovato in {mfiles_dir}")
+
+    outputs = [v.strip() for v in args.outputs.split(",") if v.strip()]
+    if not outputs:
+        sys.exit("[ERRORE] --outputs è vuoto")
+
+    is_2d = bool(args.var2)
+    mode = "2D" if is_2d else "1D"
+    print(f"[INFO] replot {mode}: {len(mfile_paths)} MFILE in {mfiles_dir}")
+    print(f"[INFO] var1={args.var1}" + (f", var2={args.var2}" if is_2d else "")
+          + f", outputs={outputs}")
+
+    rows = []
+    for mfile_path in mfile_paths:
+        try:
+            m = MFile(mfile_path)
+        except Exception as e:
+            print(f"[WARN] {mfile_path.name}: errore apertura ({e}), skip")
+            continue
+        if args.var1 not in m.data:
+            print(f"[WARN] {mfile_path.name}: '{args.var1}' assente, skip")
+            continue
+        if is_2d and args.var2 not in m.data:
+            print(f"[WARN] {mfile_path.name}: '{args.var2}' assente, skip")
+            continue
+        ifail = int(m.data["ifail"].get_scan(-1)) if "ifail" in m.data else 1
+        row = {"v1": float(m.data[args.var1].get_scan(-1)), "ifail": ifail}
+        if is_2d:
+            row["v2"] = float(m.data[args.var2].get_scan(-1))
+        for o in outputs:
+            row[o] = float(m.data[o].get_scan(-1)) if o in m.data else None
+        rows.append(row)
+
+    if not rows:
+        sys.exit("[ERRORE] nessun MFILE leggibile con le variabili richieste")
+
+    outdir = Path(args.outdir) if args.outdir else mfiles_dir.parent
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    # Il CSV va sempre accanto agli MFILE (la cartella dello scan), dove vive il
+    # results.csv del manual-scan: così le colonne si fondono lì a prescindere
+    # da dove finiscono i plot (--outdir o cartella scelta in interattivo).
+    _write_replot_csv(rows, outputs, args.var1, args.var2, mfiles_dir.parent)
+
+    if is_2d:
+        return _replot_2d(rows, outputs, args.var1, args.var2, outdir, np, plt)
+    return _replot_1d(rows, outputs, args.var1, outdir, np, plt)
 
 
 # ----------------------------------------------------------------------------
@@ -1401,6 +1618,11 @@ def _i_stress():
     return cmd_stress(argparse.Namespace(sig_tf=f))
 
 
+def _i_stress_summary():
+    m = _pick_file("Quale MFILE.DAT?", ["*_MFILE.DAT"])
+    return cmd_stress_summary(argparse.Namespace(mfile=m))
+
+
 def _i_new_in():
     m = _pick_file("MFILE del run precedente?", ["*_MFILE.DAT"])
     i = _pick_file("IN.DAT del run precedente?", ["*_IN.DAT"])
@@ -1415,17 +1637,20 @@ def _i_read():
 
 
 def _i_replot():
-    mfiles_dir = _ask("Cartella con gli MFILE (es. manual_scans/<scan>/mfiles)")
+    mfiles_dir = _ask("Cartella con gli MFILE (es. manual_scans/DIV/<scan>/mfiles)")
     if not mfiles_dir or not Path(mfiles_dir).is_dir():
         print(f"Path '{mfiles_dir}' non valido.")
         return 1
-    var1 = _ask("Nome variabile 1 (asse X)", "f_div_flux_expansion")
-    var2 = _ask("Nome variabile 2 (vuoto = scan 1D)", "")
+    var1 = _ask("Nome variabile 1 — asse X (obbligatoria)", "f_div_flux_expansion")
+    if not var1:
+        print("var1 è obbligatoria.")
+        return 1
+    var2 = _ask("Nome variabile 2 — asse Y (vuoto = replot 1D, valorizzata = replot 2D)")
     outputs = _ask("Output da plottare (CSV, anche più di uno)",
                    "pflux_div_heat_load_mw")
     outdir = _pick_dir("Cartella output per i plot?", default="Figure_DIV")
     return cmd_replot(argparse.Namespace(
-        mfiles_dir=mfiles_dir, var1=var1, var2=(var2 or None),
+        mfiles_dir=mfiles_dir, var1=var1, var2=var2 or None,
         outputs=outputs, outdir=outdir or None,
     ))
 
@@ -1504,6 +1729,7 @@ INTERACTIVE_MENU = [
     ("manual-scan-2d", "Sweep manuale 2D su due variabili",              _i_manual_scan_2d),
     ("compare-runs", "Confronta N MFILE su variabili custom (tabella+CSV+barre)", _i_compare_runs),
     ("replot",     "Rigenera plot 1D/2D da MFILE esistenti (no PROCESS)", _i_replot),
+    ("stress-summary", "Riassunto numerico stress TF + CS da un MFILE",   _i_stress_summary),
 ]
 
 
@@ -1658,18 +1884,25 @@ def build_parser():
 
     s = sub.add_parser(
         "replot",
-        help="Rigenera plot 1D o 2D da MFILE esistenti, senza rilanciare PROCESS",
+        help="Rigenera plot 1D/2D da MFILE esistenti, senza rilanciare PROCESS",
     )
     s.add_argument("--mfiles-dir", required=True, dest="mfiles_dir",
-                   help="cartella con gli MFILE (es. manual_scans/<scan>/mfiles)")
-    s.add_argument("--var1", required=True, help="variabile asse X (in 2D: loop esterno)")
-    s.add_argument("--var2", default=None,
-                   help="variabile asse Y per scan 2D (omettere per scan 1D)")
+                   help="cartella con gli MFILE (es. manual_scans/DIV/<scan>/mfiles)")
+    s.add_argument("--var1", required=True, help="variabile asse X (obbligatoria)")
+    s.add_argument("--var2",
+                   help="variabile asse Y: se data → replot 2D, se omessa → replot 1D")
     s.add_argument("--outputs", required=True,
                    help='CSV di variabili da plottare (es. "te0,bt,p_plant_electric_net_mw")')
     s.add_argument("--outdir",
                    help="cartella di output (default: cartella parent di --mfiles-dir)")
     s.set_defaults(func=cmd_replot)
+
+    s = sub.add_parser(
+        "stress-summary",
+        help="Stampa il riassunto numerico degli stress TF coil + Central Solenoid da un MFILE",
+    )
+    s.add_argument("mfile", help="path al *_MFILE.DAT")
+    s.set_defaults(func=cmd_stress_summary)
 
     return p
 
