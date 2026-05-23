@@ -33,7 +33,7 @@ PROCESS_HOME = Path(os.environ.get("PROCESS_HOME", Path.home() / "PROCESS"))
 VENV_PYTHON = PROCESS_HOME / "process" / "bin" / "python"
 PROCESS_BIN = PROCESS_HOME / "process" / "bin" / "process"
 
-FIGURE_DIRS = ["Figure_BoB", "Figure_DIV", "Figures_BB", "Figures_HCD"]
+FIGURE_DIRS = ["Figure_BoB", "Figure_DIV", "Figures_BB", "Figures_HCD", "Figure_MAG"]
 
 
 def _io_script(name: str) -> Path:
@@ -73,6 +73,152 @@ def cmd_summary(args):
     return _run([str(VENV_PYTHON), str(_io_script("plot_proc.py")), "-f", args.mfile])
 
 
+# Snippet eseguito SOTTO il python del venv di PROCESS: legge un MFILE di scan
+# ed emette, per ogni punto, la/le variabile/i di scan + ifail + le variabili Y.
+# La mappa nsweep→nome viene letta a runtime dal nsweep_dict di plot_scans.py
+# (così resta allineata alla versione di PROCESS installata).
+_SCAN_CSV_SNIPPET = r'''
+import sys, json, ast
+from process.io.mfile import MFile
+
+mfile_path = sys.argv[1]
+plot_scans_path = sys.argv[2]
+yvars = sys.argv[3:]
+
+nsweep_dict = {}
+try:
+    tree = ast.parse(open(plot_scans_path).read())
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and any(
+            getattr(t, "id", None) == "nsweep_dict" for t in node.targets
+        ):
+            nsweep_dict = ast.literal_eval(node.value)
+except Exception:
+    pass
+
+m = MFile(mfile_path)
+
+def g(k, i):
+    return m.data[k].get_scan(i) if k in m.data else None
+
+nsweep = int(m.data["nsweep"].get_scan(-1)) if "nsweep" in m.data else None
+scan_var = nsweep_dict.get(nsweep, "") if nsweep is not None else ""
+n1 = int(m.data["isweep"].get_scan(-1)) if "isweep" in m.data else 0
+has2 = "nsweep_2" in m.data
+nsweep2 = int(m.data["nsweep_2"].get_scan(-1)) if has2 else None
+scan_var2 = nsweep_dict.get(nsweep2, "") if has2 else ""
+n2 = (int(m.data["isweep_2"].get_scan(-1)) if "isweep_2" in m.data else 1) if has2 else 1
+total = n1 * n2 if has2 else n1
+
+points = []
+for i in range(1, total + 1):
+    row = {"_i": i}
+    if scan_var:
+        row[scan_var] = g(scan_var, i)
+    if has2 and scan_var2:
+        row[scan_var2] = g(scan_var2, i)
+    row["ifail"] = g("ifail", i)
+    for yv in yvars:
+        row[yv] = g(yv, i)
+    points.append(row)
+
+print("JSON_OUT:" + json.dumps({
+    "scan_var": scan_var, "scan_var2": scan_var2,
+    "has2": has2, "total": total, "points": points,
+}))
+'''
+
+
+def _scan_export_csv(mfiles, yv, yv2, outdir):
+    """Estrae i valori plottati dallo scan e li scrive in un CSV.
+
+    Una riga per punto di scan: variabile/i di scan + ifail + ogni variabile
+    -yv/-yv2. Salva nella cartella dei plot (outdir), o nella cwd se outdir è
+    vuoto. Con più MFILE aggiunge una colonna 'mfile' e li accoda tutti. Se il
+    CSV esiste già ed è consistente, unisce le nuove colonne invece di
+    sovrascrivere (vedi _merge_or_write_csv).
+    """
+    import json
+
+    yvars = []
+    for chunk in (yv, yv2):
+        if chunk:
+            for v in chunk.split():
+                if v not in yvars:
+                    yvars.append(v)
+
+    plot_scans_path = _io_script("plot_scans.py")
+    results = []
+    for mfile in mfiles:
+        res = subprocess.run(
+            [str(VENV_PYTHON), "-c", _SCAN_CSV_SNIPPET, mfile,
+             str(plot_scans_path), *yvars],
+            capture_output=True, text=True,
+        )
+        if res.returncode != 0:
+            print(f"[WARN] CSV: lettura scan fallita per {mfile}:\n{res.stderr.strip()}")
+            continue
+        parsed = next((json.loads(l[len("JSON_OUT:"):])
+                       for l in res.stdout.splitlines()
+                       if l.startswith("JSON_OUT:")), None)
+        if parsed is None:
+            print(f"[WARN] CSV: nessun output leggibile da {mfile}")
+            continue
+        results.append((mfile, parsed))
+
+    if not results:
+        print("[WARN] CSV non scritto: nessuno scan leggibile.")
+        return
+
+    first = results[0][1]
+    scan_var = first.get("scan_var") or ""
+    has2 = bool(first.get("has2"))
+    scan_var2 = first.get("scan_var2") or ""
+
+    # colonne-griglia numeriche: asse X (e Y se scan 2D). Se il nome non è
+    # risolvibile da nsweep uso l'indice del punto come chiave.
+    x_header = scan_var or "scan_point"
+    src_of = {x_header: (scan_var or "_i")}
+    grid_cols = [x_header]
+    if has2 and scan_var2:
+        grid_cols.append(scan_var2)
+        src_of[scan_var2] = scan_var2
+
+    # evito colonne duplicate se una -yv coincide con una variabile di scan
+    out_yvars = [y for y in yvars if y not in grid_cols]
+    multi = len(results) > 1
+
+    columns = (["mfile"] if multi else []) + grid_cols + ["ifail"] + out_yvars
+    key_cols = (["mfile"] if multi else []) + grid_cols  # 'mfile' = chiave stringa
+    numeric_keys = list(grid_cols)
+
+    new_rows = []
+    for mfile, parsed in results:
+        label = Path(mfile).name
+        for p in parsed["points"]:
+            row = {"ifail": p.get("ifail")}
+            if multi:
+                row["mfile"] = label
+            for gc in grid_cols:
+                row[gc] = p.get(src_of[gc])
+            for y in out_yvars:
+                row[y] = p.get(y)
+            new_rows.append(row)
+
+    out = Path(outdir) if outdir else Path(".")
+    out.mkdir(parents=True, exist_ok=True)
+    if multi:
+        csv_path, fallback = out / "scan_values.csv", out / "scan_values_new.csv"
+    else:
+        name = Path(mfiles[0]).name
+        base = (name[:-len("_MFILE.DAT")] if name.endswith("_MFILE.DAT")
+                else Path(mfiles[0]).stem)
+        csv_path, fallback = out / f"{base}_scan.csv", out / f"{base}_scan_new.csv"
+
+    _merge_or_write_csv(csv_path, columns, key_cols, numeric_keys, out_yvars,
+                        new_rows, fallback)
+
+
 def cmd_scan(args):
     _check_install()
     cmd = [str(VENV_PYTHON), str(_io_script("plot_scans.py")), "-f", *args.mfiles]
@@ -86,7 +232,13 @@ def cmd_scan(args):
         cmd += ["-sf", args.format]
     if args.contour:
         cmd += ["-2DC"]
-    return _run(cmd)
+    if args.outdir:
+        # plot_scans.py non crea la cartella: la preparo io per evitare crash sul salvataggio
+        Path(args.outdir).mkdir(parents=True, exist_ok=True)
+    rc = _run(cmd)
+    if getattr(args, "csv", False):
+        _scan_export_csv(args.mfiles, args.yv, args.yv2, args.outdir)
+    return rc
 
 
 def cmd_csv(args):
@@ -1115,40 +1267,42 @@ def cmd_manual_scan_2d(args):
     return 0
 
 
-def _write_replot_csv(rows, outputs, var1, var2, outdir):
-    """Scrive/aggiorna outdir/results.csv con le colonne di output del replot.
+def _merge_or_write_csv(csv_path, columns, key_cols, numeric_keys, value_cols,
+                        new_rows, fallback_path):
+    """Scrive `new_rows` in `csv_path`; se il file esiste già ed è consistente,
+    UNISCE le `value_cols` alle righe esistenti invece di sovrascrivere.
 
-    - Se results.csv NON esiste → lo crea con [var1(, var2), ifail, *outputs].
-    - Se esiste e contiene le colonne chiave (var1[, var2]) → unisce le nuove
-      colonne di output alle righe esistenti, abbinandole per valore della/e
-      variabile/i di scan (confronto float con tolleranza). Le colonne già
-      presenti sono preservate, quelle nuove aggiunte in coda. Così dopo un
-      manual-scan puoi rifare replot con altri output e ritrovarteli tutti
-      nello stesso CSV, pronti per Excel.
-    - Se esiste ma NON ha le colonne chiave attese → per non rovinare il file
-      scrive a parte su results_replot.csv.
+    - new_rows: lista di dict (colonna → valore), uno per riga.
+    - columns: ordine colonne per la scrittura da zero.
+    - key_cols: colonne che identificano una riga (per l'abbinamento nel merge).
+    - numeric_keys: sottoinsieme di key_cols confrontato numericamente con
+      'snap' al valore di griglia esistente più vicino (entro metà del passo
+      minimo) — robusto a differenze di precisione tra scan diversi; le altre
+      key_cols (es. 'mfile') si confrontano per stringa esatta.
+    - value_cols: colonne da aggiungere/aggiornare sulle righe abbinate.
+    - fallback_path: dove scrivere se il file esiste ma NON ha le key_cols
+      (per non rovinare un CSV non compatibile).
+
+    Comportamento:
+    - file assente → scrittura fresca con `columns`.
+    - file presente con le key_cols → merge: colonne esistenti preservate, le
+      value_cols nuove aggiunte in coda, righe abbinate aggiornate, righe non
+      abbinate accodate (con [WARN]).
+    - file presente senza le key_cols → scrittura fresca su `fallback_path`.
     """
     import csv as _csv
 
-    is_2d = bool(var2)
-    key_cols = [var1, var2] if is_2d else [var1]
-    csv_path = outdir / "results.csv"
-
-    def _row_values(r):
-        keys = [r["v1"], r["v2"]] if is_2d else [r["v1"]]
-        return keys + [r["ifail"]] + [r.get(o) for o in outputs]
-
-    def _write_fresh(path):
+    def _write_fresh(path, cols, rows_):
         with open(path, "w", newline="") as f:
-            w = _csv.writer(f)
-            w.writerow(key_cols + ["ifail"] + outputs)
-            for r in rows:
-                w.writerow(_row_values(r))
+            w = _csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")
+            w.writeheader()
+            for r in rows_:
+                w.writerow({c: r.get(c) for c in cols})
 
     if not csv_path.exists():
-        _write_fresh(csv_path)
+        _write_fresh(csv_path, columns, new_rows)
         print(f"[OK] {csv_path}")
-        return
+        return csv_path
 
     with open(csv_path, newline="") as f:
         reader = _csv.DictReader(f)
@@ -1156,28 +1310,23 @@ def _write_replot_csv(rows, outputs, var1, var2, outdir):
         existing = list(reader)
 
     if not all(kc in fieldnames for kc in key_cols):
-        alt = outdir / "results_replot.csv"
-        _write_fresh(alt)
-        print(f"[WARN] {csv_path.name} non ha le colonne {key_cols}: scrivo su {alt}")
-        print(f"[OK] {alt}")
-        return
+        _write_fresh(fallback_path, columns, new_rows)
+        print(f"[WARN] {csv_path.name} non ha le colonne {key_cols}: scrivo su {fallback_path}")
+        print(f"[OK] {fallback_path}")
+        return fallback_path
 
-    def _key_of(row_dict):
-        try:
-            return tuple(float(row_dict[kc]) for kc in key_cols)
-        except (TypeError, ValueError):
-            return None
-
-    existing_keys = [_key_of(r) for r in existing]
-    existing_by_key = {k: er for k, er in zip(existing_keys, existing) if k is not None}
-
-    # Per ogni asse costruisco uno "snapper" che aggancia il valore riletto
-    # dall'MFILE al valore di griglia esistente più vicino, se entro metà del
-    # passo minimo di quell'asse. In questo modo piccole differenze di precisione
-    # tra il valore scritto dal manual-scan e quello dell'MFILE non creano righe
-    # doppie, e due punti di griglia distinti non possono fondersi per sbaglio.
-    def _make_snapper(axis):
-        vals = sorted({k[axis] for k in existing_keys if k is not None})
+    # Snapper per ogni colonna-chiave numerica: aggancia un valore al valore di
+    # griglia esistente più vicino se entro metà del passo minimo. Così piccole
+    # differenze di precisione tra scan diversi non creano righe doppie, e due
+    # punti di griglia distinti non possono fondersi per sbaglio.
+    def _make_snapper(col):
+        vals = []
+        for r in existing:
+            try:
+                vals.append(float(r[col]))
+            except (TypeError, ValueError, KeyError):
+                pass
+        vals = sorted(set(vals))
         if len(vals) >= 2:
             tol = 0.49 * min(b - a for a, b in zip(vals, vals[1:]))
         elif len(vals) == 1:
@@ -1193,42 +1342,81 @@ def _write_replot_csv(rows, outputs, var1, var2, outdir):
 
         return snap
 
-    snappers = [_make_snapper(i) for i in range(len(key_cols))]
+    snappers = {c: _make_snapper(c) for c in numeric_keys}
 
-    for o in outputs:
-        if o not in fieldnames:
-            fieldnames.append(o)
+    def _key_of(row_dict, snap):
+        try:
+            return tuple(
+                snappers[c](float(row_dict[c])) if (snap and c in snappers)
+                else (float(row_dict[c]) if c in numeric_keys else row_dict[c])
+                for c in key_cols
+            )
+        except (TypeError, ValueError, KeyError):
+            return None
+
+    existing_by_key = {}
+    for r in existing:
+        k = _key_of(r, snap=False)
+        if k is not None:
+            existing_by_key[k] = r
+
+    for vc in value_cols:
+        if vc not in fieldnames:
+            fieldnames.append(vc)
 
     appended = 0
-    for r in rows:
-        raw = (r["v1"], r["v2"]) if is_2d else (r["v1"],)
-        snapped = tuple(snap(float(v)) for snap, v in zip(snappers, raw))
-        target = existing_by_key.get(snapped)
+    for nr in new_rows:
+        k = _key_of(nr, snap=True)
+        target = existing_by_key.get(k) if k is not None else None
         if target is not None:
-            for o in outputs:
-                target[o] = r.get(o)
+            for vc in value_cols:
+                target[vc] = nr.get(vc)
         else:
-            new = {c: "" for c in fieldnames}
-            new[var1] = r["v1"]
-            if is_2d:
-                new[var2] = r["v2"]
-            if "ifail" in fieldnames:
-                new["ifail"] = r["ifail"]
-            for o in outputs:
-                new[o] = r.get(o)
-            existing.append(new)
-            existing_by_key[snapped] = new
+            row = {c: "" for c in fieldnames}
+            for c in columns:
+                if c in fieldnames:
+                    row[c] = nr.get(c)
+            existing.append(row)
+            if k is not None:
+                existing_by_key[k] = row
             appended += 1
 
     with open(csv_path, "w", newline="") as f:
-        w = _csv.DictWriter(f, fieldnames=fieldnames)
+        w = _csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
         w.writeheader()
         w.writerows(existing)
-    print(f"[OK] {csv_path} (colonne aggiornate: {', '.join(outputs)})")
+    cols_msg = ", ".join(value_cols) if value_cols else "(nessuna)"
+    print(f"[OK] {csv_path} (colonne aggiornate: {cols_msg})")
     if appended:
-        print(f"[WARN] {appended} righe del replot non combaciavano con righe "
-              f"esistenti in {csv_path.name} e sono state aggiunte in fondo "
+        print(f"[WARN] {appended} righe non combaciavano con quelle esistenti in "
+              f"{csv_path.name} e sono state aggiunte in fondo "
               f"(possibile disallineamento dei valori di {', '.join(key_cols)}).")
+
+
+def _write_replot_csv(rows, outputs, var1, var2, outdir):
+    """Scrive/aggiorna outdir/results.csv con le colonne di output del replot.
+
+    Dopo un manual-scan puoi rifare replot con altri output e ritrovarteli tutti
+    nello stesso CSV, pronti per Excel: gli output vengono uniti come colonne,
+    abbinati per valore della/e variabile/i di scan. Vedi _merge_or_write_csv.
+    """
+    is_2d = bool(var2)
+    key_cols = [var1, var2] if is_2d else [var1]
+    columns = key_cols + ["ifail"] + outputs
+
+    new_rows = []
+    for r in rows:
+        d = {var1: r["v1"], "ifail": r["ifail"]}
+        if is_2d:
+            d[var2] = r["v2"]
+        for o in outputs:
+            d[o] = r.get(o)
+        new_rows.append(d)
+
+    _merge_or_write_csv(
+        outdir / "results.csv", columns, key_cols, key_cols, outputs,
+        new_rows, outdir / "results_replot.csv",
+    )
 
 
 def _replot_1d(rows, outputs, var1, outdir, np, plt):
@@ -1541,9 +1729,10 @@ def _i_scan():
     yv2 = _ask("Variabili sul secondo asse Y (vuoto = nessuna)")
     outdir = _pick_dir("Cartella di output per i plot?")
     contour = _ask_yn("Contour plot 2D?", default=False)
+    csv = _ask_yn("Esportare anche i valori in un CSV (nella cartella dei plot)?", default=False)
     return cmd_scan(argparse.Namespace(
         mfiles=mfiles, yv=yv or None, yv2=yv2 or None,
-        outdir=outdir or None, format="png", contour=contour,
+        outdir=outdir or None, format="png", contour=contour, csv=csv,
     ))
 
 
@@ -1758,6 +1947,8 @@ def build_parser():
     s.add_argument("-sf", "--format", choices=["pdf", "png"], default="png",
                    help="formato file (default: png)")
     s.add_argument("-2DC", "--contour", action="store_true", help="contour plot per scan 2D")
+    s.add_argument("--csv", action="store_true",
+                   help="esporta anche i valori dello scan in un CSV nella cartella di output")
     s.set_defaults(func=cmd_scan)
 
     s = sub.add_parser("csv", help="Esporta MFILE in CSV (mfile_to_csv.py)")
