@@ -263,7 +263,7 @@ def cmd_compare_runs(args):
 
     if args.title:
         fig.suptitle(args.title, fontsize=14, fontweight="bold")
-        fig.tight_layout(rect=[0, 0, 1, 0.96])
+        fig.tight_layout(rect=(0, 0, 1, 0.96))
     else:
         fig.tight_layout()
 
@@ -1408,7 +1408,7 @@ def cmd_replot(args):
     rows = []
     for mfile_path in mfile_paths:
         try:
-            m = MFile(mfile_path)
+            m = MFile(str(mfile_path))
         except Exception as e:
             print(f"[WARN] {mfile_path.name}: errore apertura ({e}), skip")
             continue

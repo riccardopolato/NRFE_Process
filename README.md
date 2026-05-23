@@ -39,6 +39,8 @@ source ~/PROCESS/process/bin/activate
 ```
 > Nota: `scripts/process_cli.py` funziona **anche senza attivare il venv** — si auto-rilancia con il python del venv quando serve. L'attivazione resta utile per usare i comandi diretti di PROCESS (vedi sezione finale).
 
+> **Se apri lo script in VS Code e vedi errori rossi** (es. `import process.io ... could not be resolved`, oppure tanti `Cannot access attribute "plot"/"scatter"/... for class ndarray`): sono **falsi positivi**, il codice gira lo stesso. Succedono quando Pylance non analizza col venv di PROCESS. Risolvi così: `Ctrl+Shift+P` → **Python: Select Interpreter** → scegli il python del tuo venv (`~/PROCESS/process/bin/python`), poi *Developer: Reload Window*. Il file `.vscode/settings.json` imposta già questo path come default per chi ha PROCESS in `~/PROCESS`.
+
 ---
 
 ## Usare PROCESS via `scripts/process_cli.py`
